@@ -82,6 +82,10 @@ bool WebsocketProtocol::IsAudioChannelOpened() const {
 
 void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
     (void)send_goodbye;  // Websocket doesn't need to send goodbye message
+    if (keep_alive_task_ != nullptr) {
+        vTaskDelete(keep_alive_task_);
+        keep_alive_task_ = nullptr;
+    }
     if (reconnect_task_ != nullptr) {
         vTaskDelete(reconnect_task_);
         reconnect_task_ = nullptr;
@@ -220,7 +224,25 @@ bool WebsocketProtocol::ConnectInternal() {
         on_audio_channel_opened_();
     }
 
+    // 启动保活 Ping: 每 30s 发一次, 防止 NAT/路由器断开空闲连接
+    if (keep_alive_task_ == nullptr) {
+        xTaskCreate(KeepAliveTask, "ws_keepalive", 2048, this, 1, &keep_alive_task_);
+    }
     return true;
+}
+
+void WebsocketProtocol::KeepAliveTask(void* arg) {
+    auto* self = static_cast<WebsocketProtocol*>(arg);
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(30000));
+        if (self->websocket_ && self->websocket_->IsConnected() && !self->deliberate_close_) {
+            self->websocket_->Ping();
+        } else {
+            break;
+        }
+    }
+    self->keep_alive_task_ = nullptr;
+    vTaskDelete(nullptr);
 }
 
 void WebsocketProtocol::ScheduleReconnect() {
