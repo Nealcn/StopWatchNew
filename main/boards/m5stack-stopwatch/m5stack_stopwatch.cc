@@ -3,6 +3,9 @@
 #include "display/lcd_display.h"
 #include "esp_lcd_co5300.h"
 #include "potato_face.h"
+#include "launcher.h"
+#include "voice_input.h"
+#include "cst820.h"
 #include "codecs/es8311_audio_codec.h"
 #include "application.h"
 #include "button.h"
@@ -10,13 +13,20 @@
 #include "M5PM1.h"
 #include "config.h"
 #include "assets/lang_config.h"
+#include "protocols/protocol.h"
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_master.h>
 #include <wifi_manager.h>
+#include <lvgl.h>
 
 #define TAG "M5StackStopwatch"
 #define LCD_OPCODE_WRITE_CMD (0x02ULL)
+
+// 组合键（A+B 同时按住）返回主页面：两键按下间隔窗口与触发后屏蔽窗口
+#define COMBO_WINDOW_US    (500 * 1000)
+#define COMBO_SUPPRESS_US  (1000 * 1000)
 
 // CO5300 AMOLED: initialize at full brightness, then restore the saved setting.
 static const co5300_lcd_init_cmd_t vendor_specific_init[] = {
@@ -67,6 +77,47 @@ private:
     Button button2_;
     PotatoFaceDisplay* display_;
     StopwatchBacklight* backlight_;
+    LauncherScreen launcher_;
+    VoiceInputApp voice_input_;
+    Cst820 touch_;
+    // 组合键（A+B）检测状态
+    int64_t btn1_down_us_ = 0;
+    int64_t btn2_down_us_ = 0;
+    int64_t last_combo_us_ = -1000000000LL;
+
+    // LVGL 触摸输入读取回调
+    static void TouchReadCb(lv_indev_t* indev, lv_indev_data_t* data) {
+        auto* self = static_cast<M5StackStopwatchBoard*>(lv_indev_get_driver_data(indev));
+        if (self->touch_.read() && self->touch_.getFingerNum() > 0) {
+            data->state = LV_INDEV_STATE_PR;
+            data->point.x = self->touch_.getX();
+            data->point.y = self->touch_.getY();
+        } else {
+            data->state = LV_INDEV_STATE_REL;
+        }
+    }
+
+    void InitializeTouch() {
+        // CST820B 触摸复位（经 IO 扩展器）
+        ioe_.pinMode(IOE_PIN_TOUCH_RST, OUTPUT);
+        ioe_.setDriveMode(IOE_PIN_TOUCH_RST, M5IOE1_DRIVE_PUSHPULL);
+        ioe_.digitalWrite(IOE_PIN_TOUCH_RST, LOW);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        ioe_.digitalWrite(IOE_PIN_TOUCH_RST, HIGH);
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        if (!touch_.begin(i2c_bus_, 0x15)) {
+            ESP_LOGE(TAG, "CST820 touch init failed");
+            return;
+        }
+
+        // 注册 LVGL 触摸输入设备（lv_init 已在 InitializeDisplay 中执行）
+        lv_indev_t* indev = lv_indev_create();
+        lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_driver_data(indev, this);
+        lv_indev_set_read_cb(indev, &M5StackStopwatchBoard::TouchReadCb);
+        ESP_LOGI(TAG, "Touch initialized (CST820)");
+    }
 
     void InitializeI2c() {
         i2c_master_bus_config_t i2c_bus_cfg = {
@@ -179,10 +230,97 @@ private:
         backlight_->RestoreBrightness();
     }
 
+    // A+B 同时按住 → 返回主页面
+    void MaybeTriggerCombo() {
+        if (btn1_down_us_ == 0 || btn2_down_us_ == 0) return;
+        if (llabs(btn1_down_us_ - btn2_down_us_) > COMBO_WINDOW_US) return;
+        if (esp_timer_get_time() - last_combo_us_ < COMBO_SUPPRESS_US) return;
+        last_combo_us_ = esp_timer_get_time();
+        HandleGoHome();
+    }
+
+    void HandleGoHome() {
+        auto& app = Application::GetInstance();
+        // 语音输入模式：退出
+        if (voice_input_.IsActive()) {
+            voice_input_.Exit();
+        }
+        // 结束当前对话（若有）
+        auto state = app.GetDeviceState();
+        if (state == kDeviceStateListening) {
+            app.StopListening();
+        } else if (state == kDeviceStateSpeaking) {
+            app.AbortSpeaking(kAbortReasonNone);
+            app.SetDeviceState(kDeviceStateIdle);
+        } else if (state == kDeviceStateConnecting) {
+            app.SetDeviceState(kDeviceStateIdle);
+        }
+        // 显示主页面
+        ShowLauncher(true);
+        // 主页面期间关唤醒词（Idle 时）
+        if (app.GetDeviceState() == kDeviceStateIdle) {
+            app.GetAudioService().EnableWakeWordDetection(false);
+        }
+    }
+
     void InitializeButtons() {
-        // Button1: wake / toggle conversation
+        // 主页面图标点击（触摸）→ 进入对应 app
+        // 回调在 LVGL 任务上下文触发，经 Schedule 转发到主任务执行
+        launcher_.SetOnAppClicked([this](int app_id) {
+            Application::GetInstance().Schedule([this, app_id]() {
+                auto& app = Application::GetInstance();
+                if (app_id == LauncherScreen::kAppVoiceInput) {
+                    // 语音输入模式
+                    ShowLauncher(false);
+                    voice_input_.Enter();
+                    return;
+                }
+                // AI 对话
+                ShowLauncher(false);
+                if (app.GetDeviceState() == kDeviceStateIdle) {
+                    app.GetAudioService().EnableWakeWordDetection(true);
+                }
+                app.ToggleChatState();
+            });
+        });
+
+        // 组合键检测：记录两键按下时刻，双键同时按下触发返回主页面
+        button1_.OnPressDown([this]() {
+            if (voice_input_.IsActive()) {
+                // 语音输入模式：按住说话
+                voice_input_.OnRecordButtonDown();
+                return;
+            }
+            btn1_down_us_ = esp_timer_get_time();
+            MaybeTriggerCombo();
+        });
+        button2_.OnPressDown([this]() {
+            btn2_down_us_ = esp_timer_get_time();
+            MaybeTriggerCombo();
+        });
+        button1_.OnPressUp([this]() {
+            btn1_down_us_ = 0;
+            if (voice_input_.IsActive()) {
+                voice_input_.OnRecordButtonUp();
+            }
+        });
+        button2_.OnPressUp([this]() { btn2_down_us_ = 0; });
+
+        // Button1: 语音模式屏蔽单击；主页面时进入对话；否则 wake / toggle conversation
         button1_.OnClick([this]() {
+            if (voice_input_.IsActive()) return; // 语音输入模式：按住说话已处理
+            if (esp_timer_get_time() - last_combo_us_ < COMBO_SUPPRESS_US) return; // 组合键释放屏蔽
             auto& app = Application::GetInstance();
+            if (launcher_.IsVisible()) {
+                // 主页面：隐藏主页面 + 恢复唤醒词 + 开始对话
+                // （协议未就绪/Starting 态时 ToggleChatState 内部安全返回）
+                ShowLauncher(false);
+                if (app.GetDeviceState() == kDeviceStateIdle) {
+                    app.GetAudioService().EnableWakeWordDetection(true);
+                }
+                app.ToggleChatState();
+                return;
+            }
             if (app.GetDeviceState() == kDeviceStateStarting && !WifiManager::GetInstance().IsConnected()) {
                 EnterWifiConfigMode();
                 return;
@@ -192,6 +330,7 @@ private:
 
         // Button2: volume 0 -> 10 -> ... -> 100 -> 0
         button2_.OnClick([this]() {
+            if (esp_timer_get_time() - last_combo_us_ < COMBO_SUPPRESS_US) return; // 组合键释放屏蔽
             auto* codec = GetAudioCodec();
             int volume = codec->output_volume() + 10;
             if (volume > 100) {
@@ -212,6 +351,7 @@ public:
         InitializeI2c();
         InitializeSpi();
         InitializeDisplay();
+        InitializeTouch();
         InitializeButtons();
     }
 
@@ -238,6 +378,15 @@ public:
 
     Backlight* GetBacklight() override {
         return backlight_;
+    }
+
+    // Launcher（主页面）接口
+    bool IsLauncherVisible() const override {
+        return launcher_.IsVisible();
+    }
+
+    void ShowLauncher(bool show) override {
+        launcher_.SetVisible(show);
     }
 
     bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {

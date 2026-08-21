@@ -184,6 +184,9 @@ void Application::Initialize() {
 
     // Update the status bar immediately to show the network state
     display->UpdateStatusBar(true);
+
+    // 开机显示主页面（此时 SetupUI 已执行完毕）
+    board.ShowLauncher(true);
 }
 
 void Application::Run() {
@@ -826,6 +829,12 @@ void Application::HandleStopListeningEvent() {
 }
 
 void Application::HandleWakeWordDetectedEvent() {
+    // 主页面显示时忽略唤醒词（仅对话界面有效）
+    if (Board::GetInstance().IsLauncherVisible()) {
+        ESP_LOGI(TAG, "Wake word ignored: launcher is visible");
+        return;
+    }
+
     if (!protocol_) {
         return;
     }
@@ -928,7 +937,10 @@ void Application::HandleStateChangedEvent() {
             display->ClearChatMessages();  // Clear messages first
             display->SetEmotion("neutral"); // Then set emotion (wechat mode checks child count)
             audio_service_.EnableVoiceProcessing(false);
-            audio_service_.EnableWakeWordDetection(true);
+            // 主页面显示时不启唤醒词（由主页面按键/组合键管理开关）
+            if (!Board::GetInstance().IsLauncherVisible()) {
+                audio_service_.EnableWakeWordDetection(true);
+            }
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);

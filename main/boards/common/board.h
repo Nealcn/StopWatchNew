@@ -82,6 +82,10 @@ public:
     virtual void SetPowerSaveLevel(PowerSaveLevel level) = 0;
     virtual std::string GetBoardJson() = 0;
     virtual std::string GetDeviceStatusJson() = 0;
+
+    // Launcher（主页面）接口：默认无 launcher，其他板不受影响
+    virtual bool IsLauncherVisible() const { return false; }
+    virtual void ShowLauncher(bool show) { (void)show; }
 };
 
 #define DECLARE_BOARD(BOARD_CLASS_NAME) \

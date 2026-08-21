@@ -13,3 +13,5 @@ managed_components/
 build_junk/
 build_old/
 *.bin
+__pycache__/
+*.pyc

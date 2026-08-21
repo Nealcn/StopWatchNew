@@ -683,7 +683,15 @@ void AudioService::ResetDecoder() {
     audio_queue_cv_.notify_all();
 }
 
+void AudioService::SetVoiceInputActive(bool active) {
+    voice_input_active_ = active;
+}
+
 void AudioService::CheckAndUpdateAudioPowerState() {
+    // 语音输入模式期间保持麦克风供电（由语音输入任务独占读取）
+    if (voice_input_active_) {
+        return;
+    }
     auto now = std::chrono::steady_clock::now();
     auto input_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_input_time_).count();
     auto output_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_output_time_).count();

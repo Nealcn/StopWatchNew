@@ -133,9 +133,12 @@ public:
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);
+    // 语音输入模式（VoiceCube）期间保持麦克风供电，跳过电源定时器检查
+    void SetVoiceInputActive(bool active);
 
 private:
     AudioCodec* codec_ = nullptr;
+    bool voice_input_active_ = false;
     AudioServiceCallbacks callbacks_;
     std::unique_ptr<AudioProcessor> audio_processor_;
     std::unique_ptr<WakeWord> wake_word_;
