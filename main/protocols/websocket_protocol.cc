@@ -82,7 +82,6 @@ bool WebsocketProtocol::IsAudioChannelOpened() const {
 
 void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
     (void)send_goodbye;  // Websocket doesn't need to send goodbye message
-    // 不再标记主动关闭：按钮中断后也允许自动重连（设备保持常在线，推送随时可达）
     if (reconnect_task_ != nullptr) {
         vTaskDelete(reconnect_task_);
         reconnect_task_ = nullptr;
