@@ -151,6 +151,27 @@ main/boards/common/esp_video.cc:13:10: fatal error: esp_imgfx_color_convert.h: N
 **构建**：BUILD_EXIT=0，xiaozhi.bin 2,693,216（+8.2KB）
 **状态**：⏸ 已编译，**未烧录**（用户指示改完先不烧录）
 
+## 三.6、主页面 + 触摸屏 + 语音输入（2026-08-21，✅ 全链路验证成功）
+
+**主页面（launcher）**：
+- 黑底 + 水平滚动图标行（AI 对话气泡 + 语音输入麦克风），触摸点击进入，A+B 返回
+- 开机显示主页面；对话/语音模式手动返回（A+B）；主页面时唤醒词不检测
+
+**触摸屏 CST820B**：启用（IO 扩展器复位 + LVGL indev），主页面图标点击进入 app
+
+**语音输入（VoiceCube 兼容，第二功能）**：
+- 点击麦克风图标进入 → BLE 广播（VS+BT-MAC，BT MAC 28:84:85:43:A4:AA 与默认 MAC A4:A8 不同！）
+- 按住按键 1 说话 → 24k→16k 重采样 → Opus 60ms 帧（16k/mono/AUDIO/28kbps）→ BLE → 桌面端 → 火山引擎 ASR → 识别结果自动粘贴（原版桌面端 paste_on_final）
+- button_down/up 状态事件（原版桌面端会话触发机制）
+- **排障记录**（供参考）：
+  1. 大块读卡死：codec->InputData 读 2400 samples 阻塞 → 改 160 samples/10ms 小块循环（与 AudioService 一致）
+  2. 重采样静默失败：esp_ae_rate_cvt_process 输出缓冲 1600 不足 → 先 get_max_out_sample_num 再处理
+  3. UI 字体缺字：basic 字体缺"识/别"等 → 用 theme->text_font()（assets 完整字体 6649 字）
+  4. 桌面端设备匹配：原版桌面端靠 paired_device_ids + last_connected_address（BT MAC）
+- 桌面端：原版 voicestick（D:\yuyin-fixed 迁移），修复 QStandardPaths import
+
+**git 提交**：`466b4f1`（主页面+触摸+语音输入）、`bafceec`（土豆脸版基线）
+
 ## 四、遗留问题 / 备注
 
 1. **OTA 服务器**：分区表变化后首次必须 USB 烧录；之后 OTA 走 esp_ota 按分区标签写入，无影响。旧 `partitions/v1/16m_stackchan.csv` 注释已更新
