@@ -1,21 +1,15 @@
-tmp/
-components/
-managed_components/
-build/
-dist/
-.vscode/
-.devcontainer/
-sdkconfig.old
+# Build outputs
+build*/
+*.log
+
+# Generated config
 sdkconfig
-dependencies.lock
-.env
-releases/
-main/assets/lang_config.h
-main/mmap_generate_emoji.h
-.DS_Store
-.cache
-*.pyc
+sdkconfig.old
+
+# Managed components (downloaded by idf component manager)
+managed_components/
+
+# Temp / junk
+build_junk/
+build_old/
 *.bin
-mmap_generate_*.h
-.clangd
-.github/

@@ -68,14 +68,6 @@ private:
         bool checksum_valid_ = false;
     };
     
-    class EmoteStrategy : public AssetStrategy {
-    public:
-        bool Apply(Assets* assets, bool refresh_display_theme = true) override;
-        bool InitializePartition(Assets* assets) override;
-        void UnApplyPartition(Assets* assets) override;
-        bool GetAssetData(Assets* assets, const std::string& name, void*& ptr, size_t& size) override;
-    };
-    
     // Strategy instance
     std::unique_ptr<AssetStrategy> strategy_;
 

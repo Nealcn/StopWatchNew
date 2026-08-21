@@ -1,9 +1,10 @@
-# ESP-IDF Partition Table - M5Stack CoreS3 StackChan (Multinet + custom wake word)
+# ESP-IDF Partition Table - M5Stack StopWatch (Multinet + custom wake word)
+# 无独立 model 分区：唤醒词模型打包在 assets 内（运行时 mmap 加载，唯一来源）
+# ota_0/ota_1 4.5MB（应用 2.77MB），assets 7MB
 # Name,   Type, SubType, Offset,  Size, Flags
 nvs,      data, nvs,     0x9000,    0x4000,
 otadata,  data, ota,     0xd000,    0x2000,
 phy_init, data, phy,     0xf000,    0x1000,
-model,    data, spiffs,  0x10000,   0x400000,
-ota_0,    app,  ota_0,   0x410000,  0x400000,
-ota_1,    app,  ota_1,   0x810000,  0x400000,
-assets,   data, spiffs,  0xC10000,  0x3F0000,
+ota_0,    app,  ota_0,   0x10000,   0x480000,
+ota_1,    app,  ota_1,   0x490000,  0x480000,
+assets,   data, spiffs,  0x910000,  0x6F0000,

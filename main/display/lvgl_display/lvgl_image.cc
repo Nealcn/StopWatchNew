@@ -14,9 +14,9 @@ LvglRawImage::LvglRawImage(void* data, size_t size) {
     image_dsc_.data_size = size;
     image_dsc_.data = static_cast<uint8_t*>(data);
     image_dsc_.header.magic = LV_IMAGE_HEADER_MAGIC;
-    image_dsc_.header.cf = LV_COLOR_FORMAT_RAW_ALPHA;
-    image_dsc_.header.w = 0;
-    image_dsc_.header.h = 0;
+    // cf 保持 UNKNOWN：让解码器链按数据格式自动选择（PNG/JPG 走 lodepng/tjpgd）。
+    // 若此处设为 RAW_ALPHA，bin 解码器会先认领并把 PNG 当作裸像素，而 w/h 为 0
+    // 会导致表情图什么都画不出来。
 }
 
 bool LvglRawImage::IsGif() const {

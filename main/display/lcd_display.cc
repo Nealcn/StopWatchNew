@@ -862,6 +862,8 @@ void LcdDisplay::SetupUI() {
 
     emoji_image_ = lv_img_create(emoji_box_);
     lv_obj_center(emoji_image_);
+    // 表情图源为 64x64，放大 3 倍（192px）以适配 466x466 圆形屏
+    lv_image_set_scale(emoji_image_, 300);
     lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
 
     /* Middle layer: preview_image_ - centered display */

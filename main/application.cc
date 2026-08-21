@@ -420,7 +420,8 @@ void Application::CheckAssetsVersion() {
     // Apply assets
     assets.Apply();
     display->SetChatMessage("system", "");
-    display->SetEmotion("microchip_ai");
+    // 待机显示默认表情（neutral），而非 AI 芯片图标
+    display->SetEmotion("neutral");
 }
 
 void Application::CheckNewVersion() {
@@ -1078,7 +1079,7 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
 void Application::SendUserText(const std::string& text) {
     ESP_LOGI(TAG, "SendUserText: \"%s\" (len=%zu)", text.c_str(), text.length());
     // 交给 WakeWordInvoke 处理所有状态分流
-    // 通过 Schedule 在主任务执行，避免 SI12T/Motion 任务直接调用
+    // 通过 Schedule 在主任务执行，避免外部任务直接调用
     Schedule([this, text]() {
         WakeWordInvoke(text);
     });
