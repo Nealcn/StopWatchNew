@@ -172,6 +172,24 @@ main/boards/common/esp_video.cc:13:10: fatal error: esp_imgfx_color_convert.h: N
 
 **git 提交**：`466b4f1`（主页面+触摸+语音输入）、`bafceec`（土豆脸版基线）
 
+## 三.7、主页面图标居中修复（2026-08-23，✅ 用户确认居中）
+
+**症状**：主页面图标/十字线/探针线整体偏右下；探针测试顶/左有线、底/右无线（误导为可见窗口裁切）；gap 改为 0 后右侧露出 6px 绿色边。
+
+**根因**：launcher 的 `panel_` 是 `lv_obj_create()`，**LVGL 9 默认主题的 card 样式带 `pad_all = 16px`（PAD_DEF）**。图标/线用 `lv_obj_set_pos` 绝对坐标 → 基准是父的 content 区（含 padding）→ 所有子对象整体偏右下 16px；y=458+ 的对象直接落到屏幕外 → 探针"下/右没有"。D:\stopwatch 原版 launcher 显式 `setPaddingAll(0)`（view.cpp L233），移植时漏了。
+
+**修复**（launcher.h Create）：
+```cpp
+lv_obj_set_style_pad_all(panel_, 0, 0);  // 关键一行
+```
+- gap 保持 `(0x06, 0)` 不动（官方 co5300 默认 CASET 6~477 证实可见窗口从 RAM 6 开始，gap 6 是正确匹配）
+- 之前加的图标 x=-6 补偿是错误推理（基于"面板 gap 导致右移"），已去掉
+- 曾把 gap 改成 0 验证窗口：右侧露出 RAM [466,472) 旧内容（绿色边）→ 证明窗口右边界 = 472、gap=6 正确，已还原
+
+**教训**：`lv_obj_create` 默认样式带 16px padding，所有用绝对坐标（set_pos）定位子对象的容器必须显式清 padding；用 `lv_obj_align`（CENTER 对称抵消）的容器不受影响。
+
+**git 提交**：`466b4f1`（主页面+触摸+语音输入）、`bafceec`（土豆脸版基线）
+
 ## 四、遗留问题 / 备注
 
 1. **OTA 服务器**：分区表变化后首次必须 USB 烧录；之后 OTA 走 esp_ota 按分区标签写入，无影响。旧 `partitions/v1/16m_stackchan.csv` 注释已更新

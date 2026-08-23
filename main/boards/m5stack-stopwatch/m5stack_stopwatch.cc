@@ -5,6 +5,8 @@
 #include "potato_face.h"
 #include "launcher.h"
 #include "voice_input.h"
+#include "watch_face.h"
+#include "setup.h"
 #include "cst820.h"
 #include "codecs/es8311_audio_codec.h"
 #include "application.h"
@@ -79,6 +81,8 @@ private:
     StopwatchBacklight* backlight_;
     LauncherScreen launcher_;
     VoiceInputApp voice_input_;
+    WatchFaceApp watch_face_;
+    SetupApp setup_;
     Cst820 touch_;
     // 组合键（A+B）检测状态
     int64_t btn1_down_us_ = 0;
@@ -241,9 +245,15 @@ private:
 
     void HandleGoHome() {
         auto& app = Application::GetInstance();
-        // 语音输入模式：退出
+        // 语音输入/表盘模式：退出
         if (voice_input_.IsActive()) {
             voice_input_.Exit();
+        }
+        if (watch_face_.IsActive()) {
+            watch_face_.Exit();
+        }
+        if (setup_.IsActive()) {
+            setup_.Exit();
         }
         // 结束当前对话（若有）
         auto state = app.GetDeviceState();
@@ -275,6 +285,18 @@ private:
                     voice_input_.Enter();
                     return;
                 }
+                if (app_id == LauncherScreen::kAppWatchFace) {
+                    // 表盘模式
+                    ShowLauncher(false);
+                    watch_face_.Enter();
+                    return;
+                }
+                if (app_id == LauncherScreen::kAppSetup) {
+                    // 设置模式
+                    ShowLauncher(false);
+                    setup_.Enter();
+                    return;
+                }
                 // AI 对话
                 ShowLauncher(false);
                 if (app.GetDeviceState() == kDeviceStateIdle) {
@@ -286,13 +308,18 @@ private:
 
         // 组合键检测：记录两键按下时刻，双键同时按下触发返回主页面
         button1_.OnPressDown([this]() {
-            if (voice_input_.IsActive()) {
-                // 语音输入模式：按住说话
-                voice_input_.OnRecordButtonDown();
-                return;
-            }
+            // 先记录时间戳并检测 A+B 组合键（语音模式下也可返回主页面）
             btn1_down_us_ = esp_timer_get_time();
             MaybeTriggerCombo();
+            if (watch_face_.IsActive()) {
+                // 表盘模式：A 键 = 上一个表盘
+                watch_face_.PrevTheme();
+                return;
+            }
+            if (voice_input_.IsActive()) {
+                // 语音输入模式：按住说话（组合键触发返回后 active 已为 false，此处安全返回）
+                voice_input_.OnRecordButtonDown();
+            }
         });
         button2_.OnPressDown([this]() {
             btn2_down_us_ = esp_timer_get_time();
@@ -306,19 +333,15 @@ private:
         });
         button2_.OnPressUp([this]() { btn2_down_us_ = 0; });
 
-        // Button1: 语音模式屏蔽单击；主页面时进入对话；否则 wake / toggle conversation
+        // Button1: 语音/表盘模式屏蔽单击；主页面时进入对话；否则 wake / toggle conversation
         button1_.OnClick([this]() {
-            if (voice_input_.IsActive()) return; // 语音输入模式：按住说话已处理
+            if (voice_input_.IsActive() || watch_face_.IsActive() || setup_.IsActive()) return; // 语音输入/表盘/设置模式
+            if (esp_timer_get_time() - last_combo_us_ < COMBO_SUPPRESS_US) return; // 组合键释放屏蔽
             if (esp_timer_get_time() - last_combo_us_ < COMBO_SUPPRESS_US) return; // 组合键释放屏蔽
             auto& app = Application::GetInstance();
             if (launcher_.IsVisible()) {
-                // 主页面：隐藏主页面 + 恢复唤醒词 + 开始对话
-                // （协议未就绪/Starting 态时 ToggleChatState 内部安全返回）
-                ShowLauncher(false);
-                if (app.GetDeviceState() == kDeviceStateIdle) {
-                    app.GetAudioService().EnableWakeWordDetection(true);
-                }
-                app.ToggleChatState();
+                // 主页面：按键 1 = 上一个功能（触摸点击进入）
+                launcher_.Prev();
                 return;
             }
             if (app.GetDeviceState() == kDeviceStateStarting && !WifiManager::GetInstance().IsConnected()) {
@@ -328,9 +351,26 @@ private:
             app.ToggleChatState();
         });
 
-        // Button2: volume 0 -> 10 -> ... -> 100 -> 0
+        // Button2: 表盘模式切换主题；否则 volume 0 -> 10 -> ... -> 100 -> 0
         button2_.OnClick([this]() {
             if (esp_timer_get_time() - last_combo_us_ < COMBO_SUPPRESS_US) return; // 组合键释放屏蔽
+            if (launcher_.IsVisible()) {
+                // 主页面：按键 2 = 下一个功能
+                launcher_.Next();
+                return;
+            }
+            if (voice_input_.IsActive()) {
+                // 语音输入模式：B 键 = 清除当前录音
+                voice_input_.ClearRecording();
+                return;
+            }
+            if (watch_face_.IsActive()) {
+                watch_face_.NextTheme();
+                return;
+            }
+            if (setup_.IsActive()) {
+                return; // 设置模式按键 2 无操作（菜单用触摸）
+            }
             auto* codec = GetAudioCodec();
             int volume = codec->output_volume() + 10;
             if (volume > 100) {
