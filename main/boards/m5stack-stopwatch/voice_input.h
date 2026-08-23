@@ -98,6 +98,26 @@ public:
         }
     }
 
+    // 清除当前录音/预览（按键 2）：终止录音并回到 Idle，通知桌面端结束会话
+    void ClearRecording() {
+        if (!active_.load()) return;
+        if (state_ == State::Idle) return;
+        if (state_ == State::Rec) {
+            record_stop_.store(true);
+            if (record_task_ != nullptr) {
+                vTaskDelete(record_task_);
+                record_task_ = nullptr;
+            }
+        }
+        char json[96];
+        snprintf(json, sizeof(json),
+                 "{\"event\":\"button_up\",\"button\":\"primary\",\"duration_ms\":0,\"session_id\":%lu}",
+                 (unsigned long)session_id_);
+        framework::BleVoice::get().sendStateJson(json);
+        preview_text_.clear();
+        SetState(State::Idle);
+    }
+
 
     // 完整中文字体（assets 加载的 font_puhui_common_20_4.bin，6649 字）；
     // basic 版（800 字）缺常用字（如"识别"的"识/别"）会显示空白
@@ -126,9 +146,11 @@ private:
     // ---- UI ----
     lv_obj_t* panel_ = nullptr;
     lv_obj_t* status_label_ = nullptr;
-    lv_obj_t* mic_body_ = nullptr;
-    lv_obj_t* mic_stand_ = nullptr;
-    lv_obj_t* mic_dot_ = nullptr;
+    lv_obj_t* mic_group_ = nullptr;      // 环形点波图形组（中心圆 + 环绕圆点）
+    lv_obj_t* mic_core_ = nullptr;       // 中心圆
+    lv_obj_t* mic_dots_[12] = {};        // 环绕圆点（环形点波动画）
+    int32_t wave_phase_ = 0;             // 点波动画相位
+    lv_timer_t* wave_timer_ = nullptr;   // 点波动画定时器
     lv_obj_t* preview_label_ = nullptr;
     lv_obj_t* hint_label_ = nullptr;
     lv_obj_t* confirm_btn_ = nullptr;
@@ -162,33 +184,33 @@ private:
         lv_obj_set_style_text_font(status_label_, GetTextFont(), 0);
         lv_obj_set_style_text_color(status_label_, lv_color_hex(0x9AA5B5), 0);
 
-        // 麦克风图形组（胶囊 + 支架 + 底座）
-        lv_obj_t* mic_group = lv_obj_create(panel_);
-        lv_obj_remove_style_all(mic_group);
-        lv_obj_set_size(mic_group, 120, 170);
-        lv_obj_align(mic_group, LV_ALIGN_CENTER, 0, -35);
-        lv_obj_clear_flag(mic_group, LV_OBJ_FLAG_SCROLLABLE);
+        // 环形点波图形组（中心圆 + 12 个环绕圆点，录音时点沿径向波动）
+        mic_group_ = lv_obj_create(panel_);
+        lv_obj_remove_style_all(mic_group_);
+        lv_obj_set_size(mic_group_, 300, 300);
+        lv_obj_align(mic_group_, LV_ALIGN_CENTER, 0, -35);
+        lv_obj_clear_flag(mic_group_, LV_OBJ_FLAG_SCROLLABLE);
 
-        mic_body_ = lv_obj_create(mic_group);
-        lv_obj_remove_style_all(mic_body_);
-        lv_obj_set_size(mic_body_, 62, 100);
-        lv_obj_align(mic_body_, LV_ALIGN_TOP_MID, 0, 0);
-        lv_obj_set_style_radius(mic_body_, 31, 0);
-        lv_obj_set_style_bg_opa(mic_body_, LV_OPA_COVER, 0);
+        mic_core_ = lv_obj_create(mic_group_);
+        lv_obj_remove_style_all(mic_core_);
+        lv_obj_set_size(mic_core_, 130, 130);
+        lv_obj_center(mic_core_);
+        lv_obj_set_style_radius(mic_core_, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(mic_core_, LV_OPA_COVER, 0);
 
-        mic_stand_ = lv_obj_create(mic_group);
-        lv_obj_remove_style_all(mic_stand_);
-        lv_obj_set_size(mic_stand_, 16, 60);
-        lv_obj_align(mic_stand_, LV_ALIGN_TOP_MID, 0, 96);
-        lv_obj_set_style_radius(mic_stand_, 8, 0);
-        lv_obj_set_style_bg_opa(mic_stand_, LV_OPA_COVER, 0);
-
-        mic_dot_ = lv_obj_create(mic_group);
-        lv_obj_remove_style_all(mic_dot_);
-        lv_obj_set_size(mic_dot_, 16, 16);
-        lv_obj_align(mic_dot_, LV_ALIGN_TOP_MID, 0, 152);
-        lv_obj_set_style_radius(mic_dot_, 8, 0);
-        lv_obj_set_style_bg_opa(mic_dot_, LV_OPA_COVER, 0);
+        for (int i = 0; i < 12; i++) {
+            mic_dots_[i] = lv_obj_create(mic_group_);
+            lv_obj_remove_style_all(mic_dots_[i]);
+            lv_obj_set_size(mic_dots_[i], 14, 14);
+            lv_obj_set_style_radius(mic_dots_[i], LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_bg_opa(mic_dots_[i], LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_color(mic_dots_[i], lv_color_hex(0x9AA5B5), 0);
+            // 初始位置：均布在半径 105 的圆环上
+            double rad = i * (2.0 * 3.14159265 / 12.0);
+            lv_obj_set_pos(mic_dots_[i], (int)(150 + 105 * cos(rad) - 7), (int)(150 + 105 * sin(rad) - 7));
+        }
+        // 点波动画：50ms 一帧
+        wave_timer_ = lv_timer_create(&VoiceInputApp::WaveTimerCb, 50, this);
 
         // 识别结果预览（仅 Preview 态显示）
         preview_label_ = lv_label_create(panel_);
@@ -236,10 +258,17 @@ private:
     }
 
     void DestroyUI() {
+        if (wave_timer_) {
+            lv_timer_delete(wave_timer_);
+            wave_timer_ = nullptr;
+        }
         if (panel_) {
             lv_obj_delete(panel_);
             panel_ = nullptr;
-            status_label_ = mic_body_ = mic_stand_ = mic_dot_ = nullptr;
+            status_label_ = nullptr;
+            mic_group_ = nullptr;
+            mic_core_ = nullptr;
+            for (auto& d : mic_dots_) d = nullptr;
             preview_label_ = hint_label_ = confirm_btn_ = cancel_btn_ = nullptr;
         }
     }
@@ -286,20 +315,45 @@ private:
         }
         lv_label_set_text(status_label_, status);
         lv_label_set_text(hint_label_, hint);
-        lv_obj_set_style_bg_color(mic_body_, lv_color_hex(color), 0);
-        lv_obj_set_style_bg_color(mic_stand_, lv_color_hex(color), 0);
-        lv_obj_set_style_bg_color(mic_dot_, lv_color_hex(color), 0);
+        lv_obj_set_style_bg_color(mic_core_, lv_color_hex(color), 0);
+        for (int i = 0; i < 12; i++) {
+            lv_obj_set_style_bg_color(mic_dots_[i], lv_color_hex(color), 0);
+        }
         if (show_preview) {
-            lv_obj_add_flag(lv_obj_get_parent(mic_body_), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(mic_group_, LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(preview_label_, LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(confirm_btn_, LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(cancel_btn_, LV_OBJ_FLAG_HIDDEN);
             lv_label_set_text(preview_label_, preview_text_.c_str());
         } else {
-            if (mic_body_) lv_obj_clear_flag(lv_obj_get_parent(mic_body_), LV_OBJ_FLAG_HIDDEN);
+            if (mic_group_) lv_obj_clear_flag(mic_group_, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(preview_label_, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(confirm_btn_, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(cancel_btn_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    // 环形点波动画：录音/识别时点沿径向波动，空闲时轻微呼吸
+    static void WaveTimerCb(lv_timer_t* t) {
+        auto* self = static_cast<VoiceInputApp*>(lv_timer_get_user_data(t));
+        self->UpdateWave();
+    }
+
+    void UpdateWave() {
+        if (!active_.load() || !mic_group_ || !panel_) return;
+        double amplitude = 4.0;
+        switch (state_) {
+            case State::Rec: amplitude = 18.0; break;
+            case State::Asr: amplitude = 11.0; break;
+            case State::Pasting: amplitude = 7.0; break;
+            default: amplitude = 4.0; break;
+        }
+        wave_phase_++;
+        for (int i = 0; i < 12; i++) {
+            double rad = i * (2.0 * 3.14159265 / 12.0);
+            double w = sin(wave_phase_ * 0.35 + i * 0.9) * amplitude;
+            int r = (int)(105 + w);
+            lv_obj_set_pos(mic_dots_[i], (int)(150 + r * cos(rad) - 7), (int)(150 + r * sin(rad) - 7));
         }
     }
 

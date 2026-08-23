@@ -6,6 +6,7 @@
 
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_random.h>
 #include <math.h>
 #include <stdlib.h>
 #include <cstring>
@@ -740,7 +741,95 @@ public:
         if (!avatar_.IsReady()) {
             avatar_.Init(lv_screen_active(), 320, 240);
         }
+
+        // 触摸反馈：按下时脸红 + 开心表情（2 秒后自动恢复）
+        // 回调在 LVGL 任务上下文触发，直接操作 LVGL 对象（不加 DisplayLockGuard，避免重入死锁）
+        lv_indev_t* indev = lv_indev_get_next(nullptr);
+        while (indev != nullptr) {
+            if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+                lv_indev_add_event_cb(indev, &PotatoFaceDisplay::TouchFeedbackCb, LV_EVENT_PRESSED, this);
+                break;
+            }
+            indev = lv_indev_get_next(indev);
+        }
     }
+
+    // 触摸按下：随机表情反馈（开心/眨眼/大笑/害羞/惊讶…），2 秒后恢复
+    void TriggerTouchFeedback() {
+        if (!avatar_.IsReady()) return;
+        static const shizhou_avatar::Expression kEmotions[] = {
+            shizhou_avatar::Expression::Happy,
+            shizhou_avatar::Expression::Winking,
+            shizhou_avatar::Expression::Laughing,
+            shizhou_avatar::Expression::Embarrassed,
+            shizhou_avatar::Expression::Surprised,
+            shizhou_avatar::Expression::Kissy,
+            shizhou_avatar::Expression::Silly,
+            shizhou_avatar::Expression::Funny,
+            shizhou_avatar::Expression::Confident,
+            shizhou_avatar::Expression::Relaxed,
+            shizhou_avatar::Expression::Thinking,
+            shizhou_avatar::Expression::Loving,
+        };
+        shizhou_avatar::Expression expr =
+            kEmotions[esp_random() % (sizeof(kEmotions) / sizeof(kEmotions[0]))];
+        // 按表情搭配叠加效果
+        shizhou_avatar::Overlay overlay;
+        switch (expr) {
+            case shizhou_avatar::Expression::Embarrassed:
+                overlay.cheek_blush = true;
+                break;
+            case shizhou_avatar::Expression::Loving:
+                overlay.heart_eyes = true;
+                break;
+            case shizhou_avatar::Expression::Happy:
+                overlay.star_burst = true;
+                break;
+            case shizhou_avatar::Expression::Laughing:
+                overlay.laugh_lines = true;
+                break;
+            case shizhou_avatar::Expression::Thinking:
+                overlay.think_bubble = true;
+                break;
+            case shizhou_avatar::Expression::Surprised:
+                overlay.excl_mark = true;
+                break;
+            case shizhou_avatar::Expression::Kissy:
+                overlay.kiss_heart = true;
+                break;
+            case shizhou_avatar::Expression::Silly:
+                overlay.wave_squiggle = true;
+                break;
+            default:
+                break;
+        }
+        avatar_.SetExpression(expr);
+        avatar_.SetOverlay(overlay);
+        if (touch_timer_ != nullptr) {
+            lv_timer_delete(touch_timer_);
+        }
+        touch_timer_ = lv_timer_create(&PotatoFaceDisplay::TouchRestoreCb, 2000, this);
+    }
+
+private:
+    static void TouchFeedbackCb(lv_event_t* e) {
+        auto* self = static_cast<PotatoFaceDisplay*>(lv_event_get_user_data(e));
+        if (self != nullptr) {
+            self->TriggerTouchFeedback();
+        }
+    }
+
+    static void TouchRestoreCb(lv_timer_t* t) {
+        auto* self = static_cast<PotatoFaceDisplay*>(lv_timer_get_user_data(t));
+        self->touch_timer_ = nullptr;
+        if (self->avatar_.IsReady()) {
+            self->avatar_.SetExpression(shizhou_avatar::Expression::Neutral);
+            self->avatar_.SetOverlay(shizhou_avatar::Overlay{});
+        }
+    }
+
+    shizhou_avatar::LvglAvatar avatar_;
+    lv_timer_t* touch_timer_ = nullptr;
 
     void SetEmotion(const char* emotion) override {
         RoundLcdDisplay::SetEmotion(emotion);
@@ -767,9 +856,6 @@ public:
             avatar_.StopSpeaking();
         }
     }
-
-private:
-    shizhou_avatar::LvglAvatar avatar_;
 };
 
 #endif // _POTATO_FACE_H_

@@ -135,7 +135,13 @@ class VoiceStickApp:
         devices_menu = self._tray_menu.addMenu("设备")
         scan_action = devices_menu.addAction("扫描配对…")
         scan_action.triggered.connect(self._show_pairing)
+        devices_menu.addSeparator()
+        switch_menu = devices_menu.addMenu("切换设备")
+        for dev_id in self._config.paired_device_ids:
+            act = switch_menu.addAction(dev_id)
+            act.triggered.connect(lambda checked=False, did=dev_id: self._switch_device(did))
         self._devices_menu = devices_menu
+        self._switch_menu = switch_menu
 
         self._tray_menu.addSeparator()
 
@@ -180,12 +186,38 @@ class VoiceStickApp:
 
     # ---- 操作 ----
 
+    def _switch_device(self, device_id: str):
+        """切换到指定已配对设备：更新直连目标并触发重连"""
+        # 扫描找到该设备地址（按 MAC 后 4 位或 VS-/VC- 前缀匹配）
+        async def _do_switch():
+            devices = await self._ble.scan(5.0)
+            target = None
+            for d in devices:
+                name = d.get("name", "") or ""
+                addr = d.get("address", "")
+                dev_id = name[3:] if (name.startswith("VS-") or name.startswith("VC-")) else addr.replace(":", "")[-4:]
+                if dev_id == device_id:
+                    target = d
+                    break
+            if target is None:
+                logger.error("未找到设备 %s（请确认已开机并在语音输入模式）", device_id)
+                return
+            self._config.last_connected_address = target["address"]
+            self._config.last_connected_name = target.get("name", "")
+            self._config.save()
+            if self._ble.is_connected:
+                await self._ble.disconnect()
+            await self._ble.connect(target["address"], self._config.last_connected_name)
+            logger.info("已切换到设备 %s", self._config.last_connected_name)
+
+        asyncio.run_coroutine_threadsafe(_do_switch(), self._loop)
+
     def _show_pairing(self):
         dialog = PairingDialog(self._qapp.activeWindow())
         if dialog.exec() and dialog.selected_address:
             addr = dialog.selected_address
             name = dialog.selected_name
-            device_id = name[3:] if (name.startswith("VS-") or name.startswith("VC-")) else addr.replace(":", "")
+            device_id = name[3:] if (name.startswith("VS-") or name.startswith("VC-")) else addr.replace(":", "")[-4:]
             if device_id not in self._config.paired_device_ids:
                 self._config.paired_device_ids.append(device_id)
                 self._config.save()

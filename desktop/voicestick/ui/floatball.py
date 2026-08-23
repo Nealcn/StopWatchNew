@@ -1,6 +1,6 @@
 """悬浮球交互界面 — 主球 + 复制球 + 对角矩形 + 居中文本编辑框"""
 import logging
-from PyQt5.QtWidgets import QWidget, QLabel, QTextEdit, QApplication, QPushButton
+from PyQt5.QtWidgets import QWidget, QLabel, QTextEdit, QApplication, QPushButton, QDialog, QVBoxLayout, QHBoxLayout
 from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QRectF, QEvent, pyqtSignal, pyqtSlot, QObject
 from PyQt5.QtGui import QPainter, QColor, QPen, QFontMetrics, QRadialGradient, QFont
 import ctypes.wintypes
@@ -69,6 +69,8 @@ class FloatingBallWindow(QWidget):
             "background:rgba(255,255,255,0.35);}")
         self._edit.setAttribute(Qt.WA_ShowWithoutActivating)
         self._edit.hide()
+        # 点击文字区域 → 弹出编辑对话框（悬浮球自身禁止激活，无法直接编辑）
+        self._edit.installEventFilter(self)
 
         # ---- buttons (清除/复制/整理/翻译/保存) ----
         self._side_btns = []
@@ -102,6 +104,7 @@ class FloatingBallWindow(QWidget):
         self._translate_cb = None
 
         self._saved_x = self._saved_y = -1
+        self._edit_hint_done = False
         self._pos_small()
         self._init_pos()
 
@@ -205,6 +208,29 @@ class FloatingBallWindow(QWidget):
         self._relayout()
         self._clamp()
         self.update()
+        # 首次显示文字时提示可点击修改
+        if not self._edit_hint_done:
+            self._edit_hint_done = True
+            self.show_toast("点击文字可修改")
+
+    # ========== 点击文字 → 编辑对话框 ==========
+
+    def eventFilter(self, obj, event):
+        if obj is self._edit and event.type() == QEvent.MouseButtonPress:
+            if event.button() == Qt.LeftButton:
+                self._open_edit_dialog()
+                return True  # 拦截点击，避免误触发窗口拖动
+        return super().eventFilter(obj, event)
+
+    def _open_edit_dialog(self):
+        text = self._edit.toPlainText()
+        dlg = EditDialog(text, self)
+        if dlg.exec() == QDialog.Accepted:
+            new_text = dlg.text()
+            if new_text != text:
+                self._show(new_text)
+            QApplication.clipboard().setText(new_text)
+            self.show_toast("已修改并复制")
 
     def _relayout(self):
         """根据屏幕位置重新布局（四象限自适应）"""
@@ -493,8 +519,34 @@ class _Ball(QWidget):
             p.drawEllipse(cx2 - s // 2, cy2 - s // 2, s, s)
 
 
+class EditDialog(QDialog):
+    """识别文字编辑对话框 — 悬浮球窗口禁止激活，键盘输入需独立对话框"""
+    def __init__(self, text, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("修改文字")
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.setModal(True)
+        self.resize(440, 260)
+        lay = QVBoxLayout(self)
+        self._edit = QTextEdit(text)
+        self._edit.setPlaceholderText("直接修改识别结果…")
+        lay.addWidget(self._edit)
+        btn_lay = QHBoxLayout()
+        btn_lay.addStretch(1)
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        ok = QPushButton("确定并复制")
+        ok.clicked.connect(self.accept)
+        btn_lay.addWidget(cancel)
+        btn_lay.addWidget(ok)
+        lay.addLayout(btn_lay)
+        self._edit.setFocus()
+
+    def text(self):
+        return self._edit.toPlainText()
+
+
 class _FuncBtn(QPushButton):
-    """38px circular function button matching the ball style"""
     def __init__(self, text, parent):
         super().__init__(text, parent)
         self.setFixedSize(44, 28)

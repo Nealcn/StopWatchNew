@@ -75,7 +75,7 @@ class BleClient:
             return
         self._last_address = address
         self._device_name = name
-        device_id = name[3:] if name.startswith(("VS-", "VC-")) else address.replace(":", "")
+        device_id = name[3:] if name.startswith(("VS-", "VC-")) else address.replace(":", "")[-4:]
         self._device_id = device_id
 
         def _disconnect_callback(client):

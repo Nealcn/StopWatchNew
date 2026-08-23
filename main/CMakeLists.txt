@@ -59,6 +59,16 @@ list(APPEND SOURCES
     "boards/common/system_reset.cc"
 )
 list(APPEND INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/boards/common)
+if(CONFIG_BOARD_TYPE_M5STACK_STOPWATCH)
+    list(APPEND INCLUDE_DIRS
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/m5stack-stopwatch
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/m5stack-stopwatch/watch_face_view
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/m5stack-stopwatch/setup_view
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/m5stack-stopwatch/setup_workers
+        ${CMAKE_CURRENT_SOURCE_DIR}/../components/smooth_ui_toolkit/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../components/smooth_ui_toolkit/src/lvgl
+    )
+endif()
 
 
 idf_build_get_property(build_components BUILD_COMPONENTS)
@@ -823,6 +833,12 @@ else()
     file(GLOB BOARD_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/*.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/*.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/watch_face_view/*.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/watch_face_view/*.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/setup_view/*.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/setup_view/*.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/setup_workers/*.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/setup_workers/*.c
     )
 endif()
 list(APPEND SOURCES ${BOARD_SOURCES})
@@ -971,6 +987,9 @@ if(CONFIG_BOARD_TYPE_ESP_VOCAT)
         espressif__touch_slider_sensor
         espressif__touch_button_sensor
     )
+endif()
+if(CONFIG_BOARD_TYPE_M5STACK_STOPWATCH)
+    list(APPEND MAIN_PRIV_REQUIRES_EXTRA smooth_ui_toolkit)
 endif()
 
 idf_component_register(SRCS ${SOURCES}
