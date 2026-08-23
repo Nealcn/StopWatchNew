@@ -223,7 +223,7 @@ private:
 
         // 提示文字
         hint_label_ = lv_label_create(panel_);
-        lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -112);
+        lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -96);
         lv_obj_set_style_text_font(hint_label_, GetTextFont(), 0);
         lv_obj_set_style_text_color(hint_label_, lv_color_hex(0x6B7686), 0);
 
@@ -290,6 +290,8 @@ private:
             case State::Idle:
                 status = framework::BleVoice::get().isConnected() ? "已连接桌面端" : "等待连接电脑…";
                 hint = "按住按键 1 说话";
+                // 已连接 = 绿色，未连接 = 灰色
+                color = framework::BleVoice::get().isConnected() ? 0x4AD78C : 0x6B7686;
                 break;
             case State::Rec:
                 status = "录音中…";

@@ -534,7 +534,7 @@ dependencies:
       type: service
     version: 1.4.0
   espressif/esp_sccb_intf:
-    component_hash: c071b189e49f40940722aea01a5489f873385cc39cd5b14012341135b85d1a9d
+    component_hash: eb6a7d5c992f09583c163b2e3f5e95a0fdc87a2d9f8e026f3e59153935553889
     dependencies:
     - name: idf
       require: private
@@ -542,7 +542,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 0.0.8
+    version: 0.0.9
   espressif/esp_video:
     component_hash: fbad1178f39cb5a81ed808c460c851b911a9858db833e2e667ada988022c0660
     dependencies:
@@ -855,6 +855,12 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 1.0.7
+  smooth_ui_toolkit:
+    dependencies: []
+    source:
+      path: D:\StopWatchNew\Stackchan-Newstep\components\smooth_ui_toolkit
+      type: local
+    version: '*'
   tny-robotics/sh1106-esp-idf:
     component_hash: b7a0cd10a16a249142b400014ad41716fb5420b4b55e08b9693e5911d9949a49
     dependencies: []
@@ -970,12 +976,13 @@ direct_dependencies:
 - lvgl/lvgl
 - m5stack/m5ioe1
 - m5stack/m5pm1
+- smooth_ui_toolkit
 - tny-robotics/sh1106-esp-idf
 - txp666/otto-emoji-gif-component
 - waveshare/custom_io_expander_ch32v003
 - waveshare/esp_lcd_sh8601
 - waveshare/esp_lcd_touch_cst9217
 - wvirgil123/sscma_client
-manifest_hash: 811b43891ad80ea314e99e8d6834ad950a85ccd0e8c118e24b620dc59eb85959
+manifest_hash: 107baced65a95677432a0b66eb1860984f706dc607c9fd40d0d8ed1bcd5e4627
 target: esp32s3
 version: 2.0.0
