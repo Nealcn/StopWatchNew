@@ -35,6 +35,7 @@ class VoiceStickApp:
     def __init__(self, qapp: QApplication):
         self._qapp = qapp
         self._config = AppConfig.load()
+        self._switching_device = False  # 切换设备中，不触发自动重连
 
         # BLE + ASR + 协调器
         self._ble = BleClient()
@@ -188,28 +189,41 @@ class VoiceStickApp:
     # ---- 操作 ----
 
     def _switch_device(self, device_id: str):
-        """切换到指定已配对设备：更新直连目标并触发重连"""
-        # 扫描找到该设备地址（按 MAC 后 4 位或 VS-/VC- 前缀匹配）
+        """切换到指定已配对设备：取消自动重连 → 扫描 → 连接"""
+        # 取消正在运行的自动重连，防止并发冲突
+        if getattr(self, "_reconnect_task", None) and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            self._reconnect_task = None
+        self._switching_device = True
+
         async def _do_switch():
-            devices = await self._ble.scan(5.0)
-            target = None
-            for d in devices:
-                name = d.get("name", "") or ""
-                addr = d.get("address", "")
-                dev_id = name[3:] if (name.startswith("VS-") or name.startswith("VC-")) else addr.replace(":", "")[-4:]
-                if dev_id == device_id:
-                    target = d
-                    break
-            if target is None:
-                logger.error("未找到设备 %s（请确认已开机并在语音输入模式）", device_id)
-                return
-            self._config.last_connected_address = target["address"]
-            self._config.last_connected_name = target.get("name", "")
-            self._config.save()
-            if self._ble.is_connected:
-                await self._ble.disconnect()
-            await self._ble.connect(target["address"], self._config.last_connected_name)
-            logger.info("已切换到设备 %s", self._config.last_connected_name)
+            try:
+                devices = await self._ble.scan(5.0)
+                target = None
+                for d in devices:
+                    name = d.get("name", "") or ""
+                    addr = d.get("address", "")
+                    dev_id = name[3:] if (name.startswith("VS-") or name.startswith("VC-")) else addr.replace(":", "")[-4:]
+                    if dev_id == device_id:
+                        target = d
+                        break
+                if target is None:
+                    logger.error("未找到设备 %s（请确认已开机并在语音输入模式）", device_id)
+                    self._coordinator.on_status("设备未找到")
+                    return
+                self._config.last_connected_address = target["address"]
+                self._config.last_connected_name = target.get("name", "")
+                self._config.save()
+                if self._ble.is_connected:
+                    await self._ble.disconnect()
+                self._coordinator.on_status("连接中…")
+                await self._ble.connect(target["address"], self._config.last_connected_name)
+                if not self._ble.is_connected:
+                    self._coordinator.on_status("连接失败")
+                else:
+                    logger.info("已切换到设备 %s", self._config.last_connected_name)
+            finally:
+                self._switching_device = False
 
         asyncio.run_coroutine_threadsafe(_do_switch(), self._loop)
 
@@ -301,6 +315,9 @@ class VoiceStickApp:
             self._coord_on_disconnected()
         self._status_action.setText("状态: 已断开（重连中…）")
         self._floatball.set_connected(False)
+        # 切换设备时由 _do_switch 负责连接，不触发自动重连
+        if self._switching_device:
+            return
         self._schedule_reconnect()
 
     def _polish_text(self, text: str):

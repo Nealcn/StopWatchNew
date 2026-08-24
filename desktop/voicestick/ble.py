@@ -24,6 +24,7 @@ class BleClient:
         self._audio_char = None
         self._state_char = None
         self._control_char = None
+        self._connect_lock = asyncio.Lock()  # 防并发连接
 
         # 回调
         self.on_audio_frame: Optional[Callable[[AudioFrame], None]] = None
@@ -89,79 +90,86 @@ class BleClient:
         if self.is_connected:
             logger.info("BLE 已连接，跳过重复连接: %s", self._device_name)
             return
-        self._last_address = address
-        self._device_name = name
-        device_id = name[3:] if name.startswith(("VS-", "VC-")) else address.replace(":", "")[-4:]
-        self._device_id = device_id
-
-        def _disconnect_callback(client):
-            logger.info("BLE 断开连接: %s", self._device_name)
-            if self.on_disconnected:
-                self.on_disconnected()
-
-        self._client = BleakClient(address, disconnected_callback=_disconnect_callback)
-
-        try:
-            await self._client.connect(timeout=timeout)
-            logger.info("BLE 已连接: %s (%s)", self._device_name, address)
-        except Exception as e:
-            logger.error("BLE 连接失败: %s", e)
-            if self.on_error:
-                self.on_error(f"连接失败: {e}")
-            self._client = None
+        if self._connect_lock.locked():
+            logger.info("BLE 正在连接中，跳过: %s", name or address)
             return
+        async with self._connect_lock:
+            # 双检锁：拿到锁后可能已连上
+            if self.is_connected:
+                return
+            self._last_address = address
+            self._device_name = name
+            device_id = name[3:] if name.startswith(("VS-", "VC-")) else address.replace(":", "")[-4:]
+            self._device_id = device_id
 
-        # 发现服务和特征
-        try:
-            for service in self._client.services:
-                if service.uuid.lower() == SERVICE_UUID:
-                    for char in service.characteristics:
-                        cu = char.uuid.lower()
-                        if cu == AUDIO_TX_UUID:
-                            self._audio_char = char
-                        elif cu == STATE_TX_UUID:
-                            self._state_char = char
-                        elif cu == CONTROL_RX_UUID:
-                            self._control_char = char
-        except Exception as e:
-            logger.error("服务发现失败: %s", e)
-            if self.on_error:
-                self.on_error(f"服务发现失败: {e}")
-            await self.disconnect()
-            return
+            def _disconnect_callback(client):
+                logger.info("BLE 断开连接: %s", self._device_name)
+                if self.on_disconnected:
+                    self.on_disconnected()
 
-        if not all([self._audio_char, self._state_char, self._control_char]):
-            missing = []
-            if not self._audio_char: missing.append("audio_tx")
-            if not self._state_char: missing.append("state_tx")
-            if not self._control_char: missing.append("control_rx")
-            err = f"缺少必要特征: {', '.join(missing)}"
-            logger.error(err)
-            if self.on_error:
-                self.on_error(err)
-            await self.disconnect()
-            return
+            self._client = BleakClient(address, disconnected_callback=_disconnect_callback)
 
-        # 订阅通知
-        try:
-            await self._client.start_notify(
-                self._audio_char.uuid,
-                self._on_audio_notify
-            )
-            await self._client.start_notify(
-                self._state_char.uuid,
-                self._on_state_notify
-            )
-        except Exception as e:
-            logger.error("订阅通知失败: %s", e)
-            if self.on_error:
-                self.on_error(f"订阅通知失败: {e}")
-            await self.disconnect()
-            return
+            try:
+                await self._client.connect(timeout=timeout)
+                logger.info("BLE 已连接: %s (%s)", self._device_name, address)
+            except Exception as e:
+                logger.error("BLE 连接失败: %s", e)
+                if self.on_error:
+                    self.on_error(f"连接失败: {e}")
+                self._client = None
+                return
 
-        logger.info("BLE 服务就绪: %s", self._device_name)
-        if self.on_connected:
-            self.on_connected(self._device_name)
+            # 发现服务和特征
+            try:
+                for service in self._client.services:
+                    if service.uuid.lower() == SERVICE_UUID:
+                        for char in service.characteristics:
+                            cu = char.uuid.lower()
+                            if cu == AUDIO_TX_UUID:
+                                self._audio_char = char
+                            elif cu == STATE_TX_UUID:
+                                self._state_char = char
+                            elif cu == CONTROL_RX_UUID:
+                                self._control_char = char
+            except Exception as e:
+                logger.error("服务发现失败: %s", e)
+                if self.on_error:
+                    self.on_error(f"服务发现失败: {e}")
+                await self.disconnect()
+                return
+
+            if not all([self._audio_char, self._state_char, self._control_char]):
+                missing = []
+                if not self._audio_char: missing.append("audio_tx")
+                if not self._state_char: missing.append("state_tx")
+                if not self._control_char: missing.append("control_rx")
+                err = f"缺少必要特征: {', '.join(missing)}"
+                logger.error(err)
+                if self.on_error:
+                    self.on_error(err)
+                await self.disconnect()
+                return
+
+            # 订阅通知
+            try:
+                await self._client.start_notify(
+                    self._audio_char.uuid,
+                    self._on_audio_notify
+                )
+                await self._client.start_notify(
+                    self._state_char.uuid,
+                    self._on_state_notify
+                )
+            except Exception as e:
+                logger.error("订阅通知失败: %s", e)
+                if self.on_error:
+                    self.on_error(f"订阅通知失败: {e}")
+                await self.disconnect()
+                return
+
+            logger.info("BLE 服务就绪: %s", self._device_name)
+            if self.on_connected:
+                self.on_connected(self._device_name)
 
     async def disconnect(self):
         if self._client and self._client.is_connected:
