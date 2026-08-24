@@ -80,7 +80,7 @@ class BleClient:
                 "service_uuids": service_uuids,
                 "tx_power": tx_power,
             })
-        logger.info("BLE扫描完成: 发现 %d 个设备", len(devices))
+        logger.debug("BLE扫描完成: 发现 %d 个设备", len(devices))
         return devices
 
     async def connect(self, address: str, name: str = "", timeout: float = 15.0):
@@ -203,9 +203,9 @@ class BleClient:
             self.on_audio_frame(frame)
 
     def _on_state_notify(self, sender, data: bytearray):
-        logger.info("收到状态通知: %d 字节: %s", len(data), bytes(data)[:120])
+        logger.debug("收到状态通知: %d 字节: %s", len(data), bytes(data)[:120])
         event = parse_state_event(bytes(data))
         if event:
-            logger.info("解析为事件: %s button=%s", event.event, event.button)
+            logger.debug("解析为事件: %s button=%s", event.event, event.button)
             if self.on_state_event:
                 self.on_state_event(event)

@@ -98,7 +98,7 @@ class Coordinator:
         await self._ble.disconnect()
 
     def _set_status(self, status: str):
-        logger.info("状态: %s", status)
+        logger.debug("状态: %s", status)
         if self.on_status:
             self.on_status(status)
 
@@ -170,12 +170,12 @@ class Coordinator:
         # button_up = 用户松开按钮，流式录音结束
         if self._recording:
             self._recording = False
-            logger.info("收到 button_up，触发流结束")
+            logger.debug("收到 button_up，触发流结束")
             asyncio.create_task(self._stream_finish())
 
     def _handle_cancel_session(self):
         """取消当前录音/ASR 会话（右键清除）：清空文字、终止 ASR、回到就绪"""
-        logger.info("收到 cancel_session，取消本轮会话")
+        logger.debug("收到 cancel_session，取消本轮会话")
         self._recording = False
         self._stream_finished = True
         self._audio_queue = None
@@ -192,10 +192,10 @@ class Coordinator:
             return
         if self._session_id is None:
             self._session_id = frame.session_id
-            logger.info("从音频帧设置 session_id=%d", self._session_id)
+            logger.debug("从音频帧设置 session_id=%d", self._session_id)
 
         if frame.is_end():
-            logger.info("收到结束帧")
+            logger.debug("收到结束帧")
             self._recording = False
             asyncio.create_task(self._stream_finish())
         elif not self._stream_finished:
@@ -252,7 +252,7 @@ class Coordinator:
             logger.debug("ASR 返回空文本(录音过短), 跳过")
             return
 
-        logger.info("ASR 最终结果: %s", text)
+        logger.debug("ASR 最终结果: %s", text)
 
         if self.on_final_text:
             self.on_final_text(text)

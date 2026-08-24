@@ -180,12 +180,12 @@ class AsrClient:
 
     def _handle_binary(self, data: bytes):
         hex_preview = data[:80].hex()
-        logger.info("📨 WS消息 %d字节: %s", len(data), hex_preview)
+        logger.debug("📨 WS消息 %d字节: %s", len(data), hex_preview)
 
         # 先尝试事件响应格式
         ev = proto.parse_event_response(data)
         if ev:
-            logger.info("  → 事件 id=%d 名称=%s payload=%s",
+            logger.debug("  → 事件 id=%d 名称=%s payload=%s",
                          ev.event_id, ev.event_name, ev.payload_text[:200] if ev.payload_text else "(空)")
             self._handle_event(ev)
             return
@@ -193,7 +193,7 @@ class AsrClient:
         # 再尝试通用响应格式
         resp = proto.parse_response(data)
         if resp:
-            logger.info("  → 响应 error=%s final=%s text=%s",
+            logger.debug("  → 响应 error=%s final=%s text=%s",
                          resp.is_error, resp.is_final, resp.text[:200] if resp.text else "(空)")
             self._handle_asr_response(resp)
             return
@@ -240,11 +240,11 @@ class AsrClient:
                 self.on_error(resp.text)
             return
         if resp.is_final:
-            logger.info("ASR 最终结果: %s", resp.text[:200])
+            logger.debug("ASR 最终结果: %s", resp.text[:200])
             if resp.text and self.on_final:
                 self.on_final(resp.text)
         else:
-            logger.info("ASR 中间结果: %s", resp.text[:200])
+            logger.debug("ASR 中间结果: %s", resp.text[:200])
             if resp.text and self.on_partial:
                 self.on_partial(resp.text)
 
@@ -258,16 +258,16 @@ class AsrClient:
         try:
             msg = await asyncio.wait_for(self._ws.receive(), timeout=timeout)
             if msg.type == WSMsgType.BINARY:
-                logger.info("收到消息: %d 字节, 前32字节=%s", len(msg.data), msg.data[:32].hex())
+                logger.debug("收到消息: %d 字节, 前32字节=%s", len(msg.data), msg.data[:32].hex())
                 # 尝试 VoiceStick 事件格式
                 ev = proto.parse_event_response(msg.data)
                 if ev:
-                    logger.info("事件 id=%d payload=%s", ev.event_id, ev.payload_text[:200])
+                    logger.debug("事件 id=%d payload=%s", ev.event_id, ev.payload_text[:200])
                     return ev.event_id == target_event_id
                 # 尝试 Volcengine 标准响应格式
                 resp = proto.parse_response(msg.data)
                 if resp:
-                    logger.info("响应: error=%s text=%s", resp.is_error, resp.text[:200])
+                    logger.debug("响应: error=%s text=%s", resp.is_error, resp.text[:200])
                     return not resp.is_error  # 任何非错误的响应都算成功
             return False
         except asyncio.TimeoutError:
