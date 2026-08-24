@@ -98,7 +98,7 @@ public:
         }
     }
 
-    // 清除当前录音/预览（按键 2）：终止录音并回到 Idle，通知桌面端结束会话
+    // 清除当前录音/预览（按键 2）：终止录音并回到 Idle，通知桌面端取消本轮会话
     void ClearRecording() {
         if (!active_.load()) return;
         if (state_ == State::Idle) return;
@@ -109,11 +109,8 @@ public:
                 record_task_ = nullptr;
             }
         }
-        char json[96];
-        snprintf(json, sizeof(json),
-                 "{\"event\":\"button_up\",\"button\":\"primary\",\"duration_ms\":0,\"session_id\":%lu}",
-                 (unsigned long)session_id_);
-        framework::BleVoice::get().sendStateJson(json);
+        // 发送 cancel_session 事件，通知桌面端终止 ASR 并清空文字
+        framework::BleVoice::get().sendStateJson("{\"event\":\"cancel_session\"}");
         preview_text_.clear();
         SetState(State::Idle);
     }

@@ -1,8 +1,8 @@
 """悬浮球交互界面 — 主球 + 复制球 + 对角矩形 + 居中文本编辑框"""
 import logging
-from PyQt5.QtWidgets import QWidget, QLabel, QTextEdit, QApplication, QPushButton, QDialog, QVBoxLayout, QHBoxLayout
-from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QRectF, QEvent, pyqtSignal, pyqtSlot, QObject
-from PyQt5.QtGui import QPainter, QColor, QPen, QFontMetrics, QRadialGradient, QFont
+from PyQt5.QtWidgets import QWidget, QLabel, QTextEdit, QApplication, QPushButton, QVBoxLayout, QHBoxLayout, QShortcut
+from PyQt5.QtCore import Qt, QTimer, QPoint, QEvent, pyqtSignal, pyqtSlot, QObject
+from PyQt5.QtGui import QPainter, QColor, QPen, QRadialGradient, QFont, QKeySequence
 import ctypes.wintypes
 
 logger = logging.getLogger(__name__)
@@ -213,24 +213,46 @@ class FloatingBallWindow(QWidget):
             self._edit_hint_done = True
             self.show_toast("点击文字可修改")
 
-    # ========== 点击文字 → 编辑对话框 ==========
+    # ========== 点击文字 → 非模态编辑窗口 ==========
 
     def eventFilter(self, obj, event):
         if obj is self._edit and event.type() == QEvent.MouseButtonPress:
             if event.button() == Qt.LeftButton:
-                self._open_edit_dialog()
+                self._open_editor()
                 return True  # 拦截点击，避免误触发窗口拖动
         return super().eventFilter(obj, event)
 
-    def _open_edit_dialog(self):
+    def _open_editor(self):
         text = self._edit.toPlainText()
-        dlg = EditDialog(text, self)
-        if dlg.exec() == QDialog.Accepted:
-            new_text = dlg.text()
-            if new_text != text:
-                self._show(new_text)
-            QApplication.clipboard().setText(new_text)
-            self.show_toast("已修改并复制")
+        if not text.strip():
+            self.show_toast("暂无内容")
+            return
+        # 计算编辑器位置：在悬浮球旁边
+        scr = self.screen().availableGeometry()
+        cx = self.x() + self.width() // 2
+        cy = self.y() + self.height() // 2
+        right = cx > scr.width() // 2
+        bottom = cy > scr.height() // 2
+        # 编辑器窗口位置：悬浮球右侧/左侧展开
+        if right:
+            ex = self.x() - 460
+        else:
+            ex = self.x() + self.width() + 4
+        ey = self.y() - 20
+        # 不超出屏幕范围
+        ex = max(scr.left() + 10, min(ex, scr.width() - 470))
+        ey = max(scr.top() + 10, min(ey, scr.height() - 240))
+
+        editor = MiniEditor(text, self)
+        editor.set_geometry(ex, ey, 460, 220)
+        editor.editor_accepted.connect(self._on_editor_accepted)
+        editor.show()
+
+    def _on_editor_accepted(self, text: str):
+        if text != self._edit.toPlainText():
+            self._show(text)
+        QApplication.clipboard().setText(text)
+        self.show_toast("已修改并复制")
 
     def _relayout(self):
         """根据屏幕位置重新布局（四象限自适应）"""
@@ -519,31 +541,109 @@ class _Ball(QWidget):
             p.drawEllipse(cx2 - s // 2, cy2 - s // 2, s, s)
 
 
-class EditDialog(QDialog):
-    """识别文字编辑对话框 — 悬浮球窗口禁止激活，键盘输入需独立对话框"""
+class MiniEditor(QWidget):
+    """非模态编辑窗口 — 点击悬浮球文字时弹出，支持直接编辑"""
+    editor_accepted = pyqtSignal(str)
+
     def __init__(self, text, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("修改文字")
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-        self.setModal(True)
-        self.resize(440, 260)
-        lay = QVBoxLayout(self)
+        super().__init__(None)  # 独立窗口，非父窗口子控件
+        self.setWindowTitle("编辑文字")
+        self.setWindowFlags(
+            Qt.WindowStaysOnTopHint | Qt.Tool | Qt.FramelessWindowHint
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setStyleSheet("""
+            MiniEditor {
+                background: rgba(255, 255, 255, 0.92);
+                border: 1px solid rgba(150, 200, 230, 0.55);
+                border-radius: 10px;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 8)
+        layout.setSpacing(6)
+
         self._edit = QTextEdit(text)
         self._edit.setPlaceholderText("直接修改识别结果…")
-        lay.addWidget(self._edit)
+        self._edit.setStyleSheet("""
+            QTextEdit {
+                background: rgba(255,255,255,0.85);
+                color: #1a1a1a;
+                font-size: 14px;
+                border: 1px solid rgba(135,206,235,0.4);
+                border-radius: 6px;
+                padding: 8px 10px;
+            }
+            QTextEdit:focus {
+                border-color: rgba(135,206,235,0.8);
+                background: rgba(255,255,255,0.95);
+            }
+        """)
+        layout.addWidget(self._edit, 1)
+
         btn_lay = QHBoxLayout()
+        btn_lay.setSpacing(6)
+
+        self._status_label = QLabel("Ctrl+Enter 确定  |  Esc 取消")
+        self._status_label.setStyleSheet("color: #999; font-size: 11px;")
+
+        ok_btn = QPushButton("确定并复制")
+        ok_btn.setFixedSize(100, 30)
+        ok_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(80, 180, 230, 0.8);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: rgba(60, 160, 220, 0.9);
+            }
+            QPushButton:pressed {
+                background: rgba(40, 140, 200, 1.0);
+            }
+        """)
+        ok_btn.clicked.connect(self._accept)
+
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setFixedSize(70, 30)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(200, 200, 200, 0.6);
+                color: #333;
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background: rgba(180, 180, 180, 0.7);
+            }
+        """)
+        cancel_btn.clicked.connect(self.close)
+
+        btn_lay.addWidget(self._status_label)
         btn_lay.addStretch(1)
-        cancel = QPushButton("取消")
-        cancel.clicked.connect(self.reject)
-        ok = QPushButton("确定并复制")
-        ok.clicked.connect(self.accept)
-        btn_lay.addWidget(cancel)
-        btn_lay.addWidget(ok)
-        lay.addLayout(btn_lay)
+        btn_lay.addWidget(ok_btn)
+        btn_lay.addWidget(cancel_btn)
+        layout.addLayout(btn_lay)
+
+        # 快捷键
+        QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._accept)
+        QShortcut(QKeySequence("Escape"), self).activated.connect(self.close)
+
         self._edit.setFocus()
 
-    def text(self):
-        return self._edit.toPlainText()
+    def set_geometry(self, x, y, w, h):
+        self.setGeometry(x, y, w, h)
+
+    def _accept(self):
+        text = self._edit.toPlainText()
+        self.editor_accepted.emit(text)
+        self.close()
 
 
 class _FuncBtn(QPushButton):

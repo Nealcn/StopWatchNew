@@ -79,6 +79,7 @@ class VoiceStickApp:
         self._coordinator.on_status = self._on_status
         self._coordinator.on_partial_text = self._on_partial_text
         self._coordinator.on_final_text = self._on_final_text
+        self._coordinator.on_session_cancelled = self._on_session_cancelled
 
         # BLE 回调
         self._ble.on_connected = self._on_ble_connected
@@ -268,12 +269,19 @@ class VoiceStickApp:
         self._status_action.setText(f"状态: {status}")
         self._tray.setToolTip(f"Voice Cube — {status}")
         self._floatball.set_status(status)
+        # "已复制" 状态 1 秒后自动恢复 "就绪"（替代 coordinator 中阻塞的 asyncio.sleep）
+        if status == "已复制":
+            QTimer.singleShot(1000, lambda: self._on_status("就绪"))
 
     def _on_partial_text(self, text: str):
         self._floatball.set_partial_text(text)
 
     def _on_final_text(self, text: str):
         self._floatball.set_final_text(text)
+
+    def _on_session_cancelled(self):
+        """会话被取消（右键清除）：清空悬浮球文字"""
+        self._floatball.clear_text()
 
     def _on_ble_connected(self, device_name: str):
         # 先执行 coordinator 的逻辑（重置 _recording、启动保活等）

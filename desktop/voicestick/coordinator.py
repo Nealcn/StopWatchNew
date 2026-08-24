@@ -28,6 +28,7 @@ class Coordinator:
         self.on_final_text: Optional[callable] = None
         self.on_device_connected: Optional[callable] = None
         self.on_device_disconnected: Optional[callable] = None
+        self.on_session_cancelled: Optional[callable] = None
 
         # LLM 翻译 + 润色
         self._translator = LLMTranslationClient()
@@ -68,7 +69,10 @@ class Coordinator:
             while self._ble.is_connected:
                 await asyncio.sleep(20)
                 if self._ble.is_connected:
-                    await self._ble.send_control(b'{"event":"ping"}')
+                    try:
+                        await self._ble.send_control(b'{"event":"ping"}')
+                    except Exception as e:
+                        logger.warning("保活 ping 失败: %s", e)
         self._keepalive_task = asyncio.create_task(_ping())
 
     def _stop_keepalive(self):
@@ -128,6 +132,8 @@ class Coordinator:
             self._handle_button_down(event)
         elif event.event == "button_up":
             self._handle_button_up(event)
+        elif event.event == "cancel_session":
+            self._handle_cancel_session()
 
     def _handle_button_down(self, event: StateEvent):
         """按下：开始录音 + 启动 ASR 流式会话"""
@@ -139,12 +145,7 @@ class Coordinator:
             self._audio_queue = asyncio.Queue()
             asyncio.create_task(self._stream_start())
         elif event.button == "primary":
-            logger.warning("⚠️ button_down ignored: _recording=%s", self._recording)
-            # 卡死保护：如果 _recording 卡 True 超过 30 秒，强制复位
-            if self._recording and hasattr(self, '_rec_start'):
-                if (asyncio.get_event_loop().time() - self._rec_start) > 30:
-                    logger.warning("⚠️ _recording 卡 True 超过 30s，强制复位")
-                    self._recording = False
+            logger.warning("⚠️ button_down 忽略: _recording=%s", self._recording)
 
     async def _stream_start(self):
         """启动 ASR 会话（流式模式下在录音开始时即创建）"""
@@ -171,6 +172,19 @@ class Coordinator:
             self._recording = False
             logger.info("收到 button_up，触发流结束")
             asyncio.create_task(self._stream_finish())
+
+    def _handle_cancel_session(self):
+        """取消当前录音/ASR 会话（右键清除）：清空文字、终止 ASR、回到就绪"""
+        logger.info("收到 cancel_session，取消本轮会话")
+        self._recording = False
+        self._stream_finished = True
+        self._audio_queue = None
+        # 终止 ASR 连接（不等待结果）
+        asyncio.create_task(self._asr.stop())
+        # 通知 UI 清空文字
+        if self.on_session_cancelled:
+            self.on_session_cancelled()
+        self._set_status("就绪")
 
     def _on_audio_frame(self, frame: AudioFrame):
         # Accept frame if session matches, or if no session set yet
@@ -207,7 +221,12 @@ class Coordinator:
         self._stream_finished = True
         # 等 ASR 会话就绪（防短按时 _stream_start 尚未完成）
         if hasattr(self, '_session_ready'):
-            await asyncio.wait_for(self._session_ready.wait(), timeout=3.0)
+            try:
+                await asyncio.wait_for(self._session_ready.wait(), timeout=3.0)
+            except asyncio.TimeoutError:
+                logger.warning("ASR 会话未就绪（超时3s），跳过流结束")
+                self._recording = False
+                return
         # 发哨兵等队列消费者结束（仅当队列未被新录音替换时）
         q = self._audio_queue
         if q is not None:
@@ -234,15 +253,14 @@ class Coordinator:
             return
 
         logger.info("ASR 最终结果: %s", text)
-        self._set_status("就绪")
 
         if self.on_final_text:
             self.on_final_text(text)
 
         if not text.strip():
+            self._set_status("就绪")
             return
 
-        # 直接粘贴原文（润色/翻译/保存仅在点击按钮时执行）
         content = text
 
         # 通知固件：有结果了（pending confirmation）
@@ -255,7 +273,7 @@ class Coordinator:
                 self._set_status("已复制")
             else:
                 self._set_status("复制失败")
-            await asyncio.sleep(1)
+        else:
             self._set_status("就绪")
 
         # 通知固件：返回就绪（蓝色）

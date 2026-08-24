@@ -58,11 +58,27 @@ class BleClient:
         for d in discovered:
             name = d.name or ""
             rssi = getattr(d, 'rssi', 0) or 0
-            logger.debug("BLE扫描到: %s (%s) RSSI=%d", name, d.address, rssi)
+            details = getattr(d, 'details', None) or {}
+            # 捕获广播数据详情
+            manufacturer_data = {}
+            if hasattr(d, 'manufacturer_data') and d.manufacturer_data:
+                for mid, mdata in d.manufacturer_data.items():
+                    manufacturer_data[str(mid)] = mdata.hex()
+            service_uuids = list(d.service_uuids) if hasattr(d, 'service_uuids') and d.service_uuids else []
+            tx_power = details.get('tx_power') if isinstance(details, dict) else None
+            # bleak 0.20+ 用 platform_data (Windows) 或 adv (Linux)
+            platform_data = details.get('platform_data', {}) if isinstance(details, dict) else {}
+            if not manufacturer_data and isinstance(platform_data, dict):
+                manufacturer_data = platform_data.get('ManufacturerData', {}) or {}
+            logger.debug("BLE扫描到: %s (%s) RSSI=%d adv=%s",
+                         name, d.address, rssi, manufacturer_data)
             devices.append({
                 "address": d.address,
                 "name": name,
                 "rssi": rssi,
+                "manufacturer_data": manufacturer_data,
+                "service_uuids": service_uuids,
+                "tx_power": tx_power,
             })
         logger.info("BLE扫描完成: 发现 %d 个设备", len(devices))
         return devices
