@@ -185,7 +185,7 @@ private:
         mic_group_ = lv_obj_create(panel_);
         lv_obj_remove_style_all(mic_group_);
         lv_obj_set_size(mic_group_, 300, 300);
-        lv_obj_align(mic_group_, LV_ALIGN_CENTER, 0, -35);
+        lv_obj_align(mic_group_, LV_ALIGN_CENTER, 0, -15);
         lv_obj_clear_flag(mic_group_, LV_OBJ_FLAG_SCROLLABLE);
 
         mic_core_ = lv_obj_create(mic_group_);
@@ -211,7 +211,7 @@ private:
 
         // 识别结果预览（仅 Preview 态显示）
         preview_label_ = lv_label_create(panel_);
-        lv_obj_align(preview_label_, LV_ALIGN_CENTER, 0, -25);
+        lv_obj_align(preview_label_, LV_ALIGN_CENTER, 0, -5);
         lv_obj_set_style_text_font(preview_label_, GetTextFont(), 0);
         lv_obj_set_style_text_color(preview_label_, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_width(preview_label_, 400);
@@ -220,14 +220,14 @@ private:
 
         // 提示文字
         hint_label_ = lv_label_create(panel_);
-        lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -96);
+        lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -76);
         lv_obj_set_style_text_font(hint_label_, GetTextFont(), 0);
         lv_obj_set_style_text_color(hint_label_, lv_color_hex(0x6B7686), 0);
 
         // 确认/取消按钮
         confirm_btn_ = lv_btn_create(panel_);
         lv_obj_set_size(confirm_btn_, 130, 52);
-        lv_obj_align(confirm_btn_, LV_ALIGN_BOTTOM_MID, -110, -60);
+        lv_obj_align(confirm_btn_, LV_ALIGN_BOTTOM_MID, -110, -80);
         lv_obj_set_style_bg_color(confirm_btn_, lv_color_hex(0x2E6BE6), 0);
         lv_obj_add_flag(confirm_btn_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_event_cb(confirm_btn_, [](lv_event_t* e) {
@@ -240,7 +240,7 @@ private:
 
         cancel_btn_ = lv_btn_create(panel_);
         lv_obj_set_size(cancel_btn_, 130, 52);
-        lv_obj_align(cancel_btn_, LV_ALIGN_BOTTOM_MID, 110, -60);
+        lv_obj_align(cancel_btn_, LV_ALIGN_BOTTOM_MID, 110, -80);
         lv_obj_set_style_bg_color(cancel_btn_, lv_color_hex(0x444444), 0);
         lv_obj_add_flag(cancel_btn_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_event_cb(cancel_btn_, [](lv_event_t* e) {
