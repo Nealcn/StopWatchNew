@@ -53,6 +53,7 @@ class VoiceStickApp:
         self._tray_menu: Optional[QMenu] = None
         self._floatball = FloatingBallWindow()
         self._floatball.position_changed.connect(self._save_floatball_pos)
+        self._floatball.reconnect_requested.connect(self._force_reconnect)
         # LLM callbacks for 整理/翻译 buttons
         self._floatball.set_llm_callbacks(
             polish_cb=self._polish_text,
@@ -372,6 +373,34 @@ class VoiceStickApp:
             return
         self._reconnect_task = asyncio.run_coroutine_threadsafe(
             self._auto_reconnect(), self._loop)
+
+    def _force_reconnect(self):
+        """双击小球强制重连：取消当前重连任务，立即开始一轮新的扫描+连接"""
+        # 取消正在运行的重连循环
+        if getattr(self, "_reconnect_task", None) and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            self._reconnect_task = None
+        # 立即开始一轮重连（不等待退避）
+        self._coordinator.on_status("重连中…")
+        self._reconnect_task = asyncio.run_coroutine_threadsafe(
+            self._force_reconnect_async(), self._loop)
+
+    async def _force_reconnect_async(self):
+        """立即强制扫描+连接，不等待退避"""
+        if self._ble.is_connected:
+            return
+        addr = self._ble._last_address or self._config.last_connected_address
+        name = self._ble._device_name or self._config.last_connected_name
+        if addr:
+            await self._ble.connect(addr, name, timeout=8.0)
+        if not self._ble.is_connected and self._config.paired_device_ids:
+            await self._scan_and_connect(retries=2)
+        if self._ble.is_connected:
+            self._coordinator.on_status("已连接")
+        else:
+            self._coordinator.on_status("重连失败")
+            # 仍然启动后台自动重连（退避）
+            self._schedule_reconnect()
 
     async def _scan_and_connect(self, retries=3):
         """扫描并连接第一个已配对设备（扫描不到自动重试）"""

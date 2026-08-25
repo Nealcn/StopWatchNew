@@ -31,6 +31,7 @@ class _Bridge(QObject):
 
 class FloatingBallWindow(QWidget):
     position_changed = pyqtSignal()
+    reconnect_requested = pyqtSignal()  # 双击小球触发重连
 
     def __init__(self):
         super().__init__(None)
@@ -468,6 +469,14 @@ class _Ball(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+
+    def mouseDoubleClickEvent(self, event):
+        """双击小球 → 通知父窗口触发重连"""
+        if not self._connected:
+            parent = self.parent()
+            if hasattr(parent, 'reconnect_requested'):
+                parent.reconnect_requested.emit()
+        super().mouseDoubleClickEvent(event)
 
     def set_text(self, t):
         self._text = t
