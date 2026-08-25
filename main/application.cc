@@ -105,6 +105,9 @@ void Application::Initialize() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_WAKE_WORD_DETECTED);
     };
     callbacks.on_vad_change = [this](bool speaking) {
+        if (speaking) {
+            ResetIdleTimer();  // 语音活动 → 重置空闲计时
+        }
         xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
     };
     audio_service_.SetCallbacks(callbacks);
@@ -276,13 +279,36 @@ void Application::Run() {
             clock_ticks_++;
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
-        
+
+            // 空闲降亮度：30 秒无操作 → 亮度 10
+            idle_ticks_++;
+            if (idle_ticks_ >= 30 && !dimmed_) {
+                dimmed_ = true;
+                auto backlight = Board::GetInstance().GetBacklight();
+                if (backlight) {
+                    backlight->SetBrightness(10, false);
+                    ESP_LOGI(TAG, "Idle 30s, dimmed brightness to 10");
+                }
+            } else if (idle_ticks_ < 30 && dimmed_) {
+                dimmed_ = false;
+                auto backlight = Board::GetInstance().GetBacklight();
+                if (backlight) {
+                    backlight->RestoreBrightness();
+                    ESP_LOGI(TAG, "Activity resumed, restored brightness");
+                }
+            }
+
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
             }
         }
     }
+}
+
+void Application::ResetIdleTimer() {
+    idle_ticks_ = 0;
+    // 如果已降亮度，立即恢复（由 CLOCK_TICK 在下一次检测到 idle_ticks_ < 30 时恢复）
 }
 
 void Application::HandleNetworkConnectedEvent() {
@@ -924,6 +950,10 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
 void Application::HandleStateChangedEvent() {
     DeviceState new_state = state_machine_.GetState();
     clock_ticks_ = 0;
+    // 进入非空闲状态 → 重置空闲计时
+    if (new_state != kDeviceStateIdle && new_state != kDeviceStateStarting) {
+        ResetIdleTimer();
+    }
 
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();

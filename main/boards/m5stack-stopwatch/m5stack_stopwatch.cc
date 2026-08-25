@@ -96,6 +96,8 @@ private:
             data->state = LV_INDEV_STATE_PR;
             data->point.x = self->touch_.getX();
             data->point.y = self->touch_.getY();
+            // 触摸活动 → 重置空闲计时
+            Application::GetInstance().ResetIdleTimer();
         } else {
             data->state = LV_INDEV_STATE_REL;
         }
@@ -308,6 +310,8 @@ private:
 
         // 组合键检测：记录两键按下时刻，双键同时按下触发返回主页面
         button1_.OnPressDown([this]() {
+            // 按键活动 → 重置空闲计时
+            Application::GetInstance().ResetIdleTimer();
             // 先记录时间戳并检测 A+B 组合键（语音模式下也可返回主页面）
             btn1_down_us_ = esp_timer_get_time();
             MaybeTriggerCombo();
@@ -323,6 +327,8 @@ private:
         });
         button2_.OnPressDown([this]() {
             btn2_down_us_ = esp_timer_get_time();
+            // 按键活动 → 重置空闲计时
+            Application::GetInstance().ResetIdleTimer();
             MaybeTriggerCombo();
         });
         button1_.OnPressUp([this]() {

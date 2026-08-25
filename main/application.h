@@ -117,6 +117,11 @@ public:
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
+
+    /**
+     * Reset idle timer (called on touch/button/voice activity)
+     */
+    void ResetIdleTimer();
     
     /**
      * Reset protocol resources (thread-safe)
@@ -150,6 +155,10 @@ private:
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
+
+    // 空闲自动降亮度
+    std::atomic<int> idle_ticks_{0};
+    std::atomic<bool> dimmed_{false};
 
 
     // Event handlers
