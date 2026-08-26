@@ -44,9 +44,9 @@ class FloatingBallWindow(QWidget):
 
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint
-            | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground)
+            | Qt.Window)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
 
         self._bridge = _Bridge()
@@ -558,7 +558,7 @@ class MiniEditor(QWidget):
         super().__init__(None)  # 独立窗口，非父窗口子控件
         self.setWindowTitle("编辑文字")
         self.setWindowFlags(
-            Qt.WindowStaysOnTopHint | Qt.Tool | Qt.FramelessWindowHint
+            Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_DeleteOnClose)
