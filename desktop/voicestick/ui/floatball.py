@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import QWidget, QLabel, QTextEdit, QApplication, QPushButto
 from PyQt5.QtCore import Qt, QTimer, QPoint, QEvent, pyqtSignal, pyqtSlot, QObject
 from PyQt5.QtGui import QPainter, QColor, QPen, QRadialGradient, QFont, QKeySequence
 import ctypes.wintypes
+import ctypes
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class FloatingBallWindow(QWidget):
 
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint
-            | Qt.Window)
+            | Qt.Tool)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
@@ -342,6 +343,18 @@ class FloatingBallWindow(QWidget):
         self.move(x, y)
         self.position_changed.emit()
 
+    # ========== show event: 强制置顶 ==========
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 通过 Windows API 强制 HWND_TOPMOST，确保不被其他窗口遮挡
+        try:
+            hwnd = int(self.winId())
+            ctypes.windll.user32.SetWindowPos(
+                hwnd, -1, 0, 0, 0, 0, 0x0002 | 0x0001)  # HWND_TOPMOST, SWP_NOMOVE | SWP_NOSIZE
+        except Exception:
+            pass
+
     # ========== events (drag on main ball only) ==========
 
     def mousePressEvent(self, e):
@@ -447,10 +460,6 @@ class FloatingBallWindow(QWidget):
             if msg.message == 0x0021:  # WM_MOUSEACTIVATE
                 # MA_NOACTIVATE = 3 → 鼠标点击时不激活窗口
                 return True, 3
-            if msg.message == 0x0006:  # WM_ACTIVATE
-                low = msg.wParam & 0xFFFF
-                if low != 0:  # WA_ACTIVE or WA_CLICKACTIVE
-                    return True, 0  # 拒绝激活
         return super().nativeEvent(eventType, message)
 
 
@@ -559,7 +568,7 @@ class MiniEditor(QWidget):
         self.setWindowTitle("编辑文字")
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint
-        )
+            | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setStyleSheet("""
