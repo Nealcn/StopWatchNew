@@ -6,6 +6,7 @@ from typing import Optional, Callable
 import bleak
 from bleak import BleakScanner, BleakClient
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
 
 from .protocol import (
     SERVICE_UUID, AUDIO_TX_UUID, STATE_TX_UUID, CONTROL_RX_UUID,
@@ -25,6 +26,7 @@ class BleClient:
         self._state_char = None
         self._control_char = None
         self._connect_lock = asyncio.Lock()  # 防并发连接
+        self._connect_cancel_event = asyncio.Event()  # 连接取消事件
 
         # 回调
         self.on_audio_frame: Optional[Callable[[AudioFrame], None]] = None
@@ -97,6 +99,7 @@ class BleClient:
             # 双检锁：拿到锁后可能已连上
             if self.is_connected:
                 return
+            self._connect_cancel_event.clear()
             self._last_address = address
             self._device_name = name
             device_id = name[3:] if name.startswith(("VS-", "VC-")) else address.replace(":", "")[-4:]
@@ -112,11 +115,15 @@ class BleClient:
             try:
                 await self._client.connect(timeout=timeout)
                 logger.info("BLE 已连接: %s (%s)", self._device_name, address)
+            except asyncio.CancelledError:
+                logger.warning("BLE 连接被取消: %s (%s)", self._device_name, address)
+                await self._cleanup_client()
+                return
             except Exception as e:
                 logger.error("BLE 连接失败: %s", e)
                 if self.on_error:
                     self.on_error(f"连接失败: {e}")
-                self._client = None
+                await self._cleanup_client()
                 return
 
             # 发现服务和特征
@@ -135,7 +142,8 @@ class BleClient:
                 logger.error("服务发现失败: %s", e)
                 if self.on_error:
                     self.on_error(f"服务发现失败: {e}")
-                await self.disconnect()
+                await self._client.disconnect()
+                await self._cleanup_client()
                 return
 
             if not all([self._audio_char, self._state_char, self._control_char]):
@@ -147,7 +155,8 @@ class BleClient:
                 logger.error(err)
                 if self.on_error:
                     self.on_error(err)
-                await self.disconnect()
+                await self._client.disconnect()
+                await self._cleanup_client()
                 return
 
             # 订阅通知
@@ -164,23 +173,29 @@ class BleClient:
                 logger.error("订阅通知失败: %s", e)
                 if self.on_error:
                     self.on_error(f"订阅通知失败: {e}")
-                await self.disconnect()
+                await self._client.disconnect()
+                await self._cleanup_client()
                 return
 
             logger.info("BLE 服务就绪: %s", self._device_name)
             if self.on_connected:
                 self.on_connected(self._device_name)
 
-    async def disconnect(self):
-        if self._client and self._client.is_connected:
-            try:
-                await self._client.disconnect()
-            except Exception:
-                pass
-        self._client = None
+    async def _cleanup_client(self):
+        """安全清理 _client 引用，不再持有即可被 GC 回收"""
         self._audio_char = None
         self._state_char = None
         self._control_char = None
+        self._client = None
+
+    async def disconnect(self):
+        if self._client:
+            try:
+                if self._client.is_connected:
+                    await self._client.disconnect()
+            except Exception:
+                pass
+        await self._cleanup_client()
 
     async def send_control(self, data: bytes):
         """发送控制命令 (write without response)"""

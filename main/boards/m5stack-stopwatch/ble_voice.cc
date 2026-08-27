@@ -173,6 +173,14 @@ int ble_gap_event_cb(struct ble_gap_event* event, void* arg)
             };
             ble_gap_update_params(_conn_handle, &params);
         } else {
+            ESP_LOGW(_tag, "connect failed, status=%d", event->connect.status);
+            if (_connected) {
+                _connected = false;
+                _conn_handle = 0xffff;
+                if (_connect_cb) {
+                    _connect_cb(false);
+                }
+            }
             start_advertising();
         }
         break;
@@ -221,6 +229,11 @@ void ble_sync_cb(void)
 void ble_reset_cb(int reason)
 {
     ESP_LOGW(_tag, "BLE host reset: %d", reason);
+    _connected   = false;
+    _conn_handle = 0xffff;
+    if (_connect_cb) {
+        _connect_cb(false);
+    }
 }
 
 void nimble_host_task(void* param)

@@ -192,9 +192,10 @@ class VoiceStickApp:
     def _switch_device(self, device_id: str):
         """切换到指定已配对设备：取消自动重连 → 扫描 → 连接"""
         # 取消正在运行的自动重连，防止并发冲突
-        if getattr(self, "_reconnect_task", None) and not self._reconnect_task.done():
-            self._reconnect_task.cancel()
-            self._reconnect_task = None
+        old_task = getattr(self, "_reconnect_task", None)
+        if old_task is not None and not old_task.done():
+            old_task.cancel()
+        self._reconnect_task = None
         self._switching_device = True
 
         async def _do_switch():
@@ -223,6 +224,9 @@ class VoiceStickApp:
                     self._coordinator.on_status("连接失败")
                 else:
                     logger.info("已切换到设备 %s", self._config.last_connected_name)
+            except asyncio.CancelledError:
+                logger.debug("设备切换被取消")
+                raise
             finally:
                 self._switching_device = False
 
@@ -351,74 +355,91 @@ class VoiceStickApp:
 
     async def _auto_reconnect(self):
         """断连后持续自动重连：直连 → 扫描交替，退避 2s→5s→10s，
-        直到连上或应用退出。设备崩溃重启/重启较慢时不再放弃。"""
+        直到连上或应用退出。设备崩溃重启/重启较慢时不再放弃。
+        注意：此协程可能在外部被取消（_force_reconnect/_switch_device），
+        必须用 try/except CancelledError 保证退出干净。"""
         delay = 2.0
-        while not self._ble.is_connected:
-            addr = self._ble._last_address or self._config.last_connected_address
-            name = self._ble._device_name or self._config.last_connected_name
-            if not addr and not self._config.paired_device_ids:
-                return  # 没有可连的设备
-            if addr:
-                await self._ble.connect(addr, name, timeout=8.0)
-            if not self._ble.is_connected and self._config.paired_device_ids:
-                await self._scan_and_connect(retries=1)  # 每轮一次扫描
-            if self._ble.is_connected:
-                return
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 10.0)
+        try:
+            while not self._ble.is_connected:
+                if self._switching_device:
+                    return
+                addr = self._ble._last_address or self._config.last_connected_address
+                name = self._ble._device_name or self._config.last_connected_name
+                if not addr and not self._config.paired_device_ids:
+                    return  # 没有可连的设备
+                if addr:
+                    await self._ble.connect(addr, name, timeout=8.0)
+                if self._ble.is_connected:
+                    return
+                if not self._switching_device and self._config.paired_device_ids:
+                    await self._scan_and_connect(retries=1)  # 每轮一次扫描
+                if self._ble.is_connected:
+                    return
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 10.0)
+        except asyncio.CancelledError:
+            logger.debug("自动重连被取消")
+            raise
 
     def _schedule_reconnect(self):
         """启动/复用自动重连任务（防止断连风暴产生多个并发循环）"""
-        if getattr(self, "_reconnect_task", None) and not self._reconnect_task.done():
+        current = getattr(self, "_reconnect_task", None)
+        if current is not None and not current.done():
             return
         self._reconnect_task = asyncio.run_coroutine_threadsafe(
             self._auto_reconnect(), self._loop)
 
     def _force_reconnect(self):
         """双击小球强制重连：取消当前重连任务，立即开始一轮新的扫描+连接"""
-        # 取消正在运行的重连循环
-        if getattr(self, "_reconnect_task", None) and not self._reconnect_task.done():
-            self._reconnect_task.cancel()
-            self._reconnect_task = None
-        # 立即开始一轮重连（不等待退避）
+        old_task = getattr(self, "_reconnect_task", None)
+        if old_task is not None and not old_task.done():
+            old_task.cancel()
+        self._reconnect_task = None
         self._coordinator.on_status("重连中…")
         self._reconnect_task = asyncio.run_coroutine_threadsafe(
             self._force_reconnect_async(), self._loop)
 
     async def _force_reconnect_async(self):
         """立即强制扫描+连接，不等待退避"""
-        if self._ble.is_connected:
-            return
-        addr = self._ble._last_address or self._config.last_connected_address
-        name = self._ble._device_name or self._config.last_connected_name
-        if addr:
-            await self._ble.connect(addr, name, timeout=8.0)
-        if not self._ble.is_connected and self._config.paired_device_ids:
-            await self._scan_and_connect(retries=2)
-        if self._ble.is_connected:
-            self._coordinator.on_status("已连接")
-        else:
-            self._coordinator.on_status("重连失败")
-            # 仍然启动后台自动重连（退避）
-            self._schedule_reconnect()
+        try:
+            if self._ble.is_connected:
+                return
+            addr = self._ble._last_address or self._config.last_connected_address
+            name = self._ble._device_name or self._config.last_connected_name
+            if addr:
+                await self._ble.connect(addr, name, timeout=8.0)
+            if not self._ble.is_connected and self._config.paired_device_ids:
+                await self._scan_and_connect(retries=2)
+            if self._ble.is_connected:
+                self._coordinator.on_status("已连接")
+            else:
+                self._coordinator.on_status("重连失败")
+                self._schedule_reconnect()
+        except asyncio.CancelledError:
+            logger.debug("强制重连被取消")
+            raise
 
     async def _scan_and_connect(self, retries=3):
         """扫描并连接第一个已配对设备（扫描不到自动重试）"""
         if self._ble.is_connected:
             return
         paired = set(self._config.paired_device_ids)
-        for attempt in range(retries):
-            if self._ble.is_connected:
-                return
-            await asyncio.sleep(1)  # 每次尝试前等设备就绪(广播间隔已加快,1s 足够)
-            devices = await self._ble.scan(3.0 if attempt == 0 else 5.0)
-            for d in devices:
-                name = d.get("name", "") or ""
-                addr = d.get("address", "")
-                dev_id = name[3:] if (name.startswith("VS-") or name.startswith("VC-")) else addr.replace(":", "")[-4:]
-                if dev_id in paired:
-                    await self._ble.connect(d["address"], name)
+        try:
+            for attempt in range(retries):
+                if self._ble.is_connected:
                     return
-            if attempt < retries - 1:
-                logger.info("扫描未匹配到设备，%.0f 秒后重试...", 3.0)
-                await asyncio.sleep(3)
+                await asyncio.sleep(1)  # 每次尝试前等设备就绪(广播间隔已加快,1s 足够)
+                devices = await self._ble.scan(3.0 if attempt == 0 else 5.0)
+                for d in devices:
+                    name = d.get("name", "") or ""
+                    addr = d.get("address", "")
+                    dev_id = name[3:] if (name.startswith("VS-") or name.startswith("VC-")) else addr.replace(":", "")[-4:]
+                    if dev_id in paired:
+                        await self._ble.connect(d["address"], name)
+                        return
+                if attempt < retries - 1:
+                    logger.info("扫描未匹配到设备，%.0f 秒后重试...", 3.0)
+                    await asyncio.sleep(3)
+        except asyncio.CancelledError:
+            logger.debug("扫描连接被取消")
+            raise
