@@ -5,6 +5,25 @@ import sys
 import os
 import asyncio
 import logging
+import traceback
+
+
+def _excepthook(exc_type, exc, tb):
+    """全局未捕获异常兜底：写入 crash.log 并打印，避免静默消失"""
+    text = "".join(traceback.format_exception(exc_type, exc, tb))
+    logging.critical("未捕获异常导致退出:\n%s", text)
+    try:
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crash.log")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write("=== 崩溃时间 ===\n")
+            f.write(text + "\n")
+    except Exception:
+        pass
+    sys.__excepthook__(exc_type, exc, tb)
+
+
+# 兜底所有未捕获异常（PyQt5 槽内异常会直接 terminate 进程，先落盘再退出）
+sys.excepthook = _excepthook
 
 # Windows BLE (bleak) 需要 Selector 事件循环
 if sys.platform == "win32":

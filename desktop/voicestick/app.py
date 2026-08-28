@@ -31,6 +31,17 @@ class _ClipboardBridge(QObject):
         self.copy_requested.connect(QApplication.clipboard().setText)
 
 
+class _MainBridge(QObject):
+    """跨线程桥：asyncio 后台线程 → Qt 主线程。
+
+    所有从后台线程触发的 Qt 控件操作（状态栏文字、托盘提示、定时器）
+    必须经此信号排队到主线程执行，否则 Qt 会直接 abort 进程。
+    """
+    status_signal = pyqtSignal(str)
+    connected_signal = pyqtSignal(str)
+    disconnected_signal = pyqtSignal()
+
+
 class VoiceStickApp:
     def __init__(self, qapp: QApplication):
         self._qapp = qapp
@@ -41,10 +52,17 @@ class VoiceStickApp:
         self._ble = BleClient()
         self._asr = AsrClient(self._config.asr_server_url, self._config.asr_api_key)
         self._coordinator = Coordinator(self._ble, self._asr)
-        # 跨线程剪贴板桥（必须在主线程创建 QObject）
+        # 跨线程桥（必须在主线程创建 QObject）：
+        # 1) 剪贴板桥 — 后台线程安全设置剪贴板
+        # 2) 主桥 — 状态/连接回调排队到主线程再操作 Qt 控件
         self._clipboard_bridge = _ClipboardBridge()
         self._coordinator.clipboard_callback = self._clipboard_bridge.copy_requested.emit
-        # 保存 coordinator 的 BLE 回调，避免被 app.py 覆盖后丢失
+        self._main_bridge = _MainBridge()
+        self._main_bridge.status_signal.connect(self._on_status)
+        self._main_bridge.connected_signal.connect(self._on_ble_connected_ui)
+        self._main_bridge.disconnected_signal.connect(self._on_ble_disconnected_ui)
+        self._coordinator.on_status = self._main_bridge.status_signal.emit
+        # 保存 coordinator 的 BLE 回调（协程线程内执行，不碰 Qt 控件）
         self._coord_on_connected = self._ble.on_connected
         self._coord_on_disconnected = self._ble.on_disconnected
 
@@ -78,12 +96,12 @@ class VoiceStickApp:
             prompt=self._config.polish_prompt,
             before_translate=(self._config.polish_position == "before_translate"),
         )
-        self._coordinator.on_status = self._on_status
+        # 注意：on_status 已在上面接入 _main_bridge.status_signal（勿再直接赋值 _on_status）
         self._coordinator.on_partial_text = self._on_partial_text
         self._coordinator.on_final_text = self._on_final_text
         self._coordinator.on_session_cancelled = self._on_session_cancelled
 
-        # BLE 回调
+        # BLE 回调（asyncio 线程侧：协调器逻辑 + 经主桥转发 UI 更新）
         self._ble.on_connected = self._on_ble_connected
         self._ble.on_disconnected = self._on_ble_disconnected
 
@@ -108,6 +126,23 @@ class VoiceStickApp:
     def _run_loop(self):
         """后台线程：驱动 asyncio 事件循环"""
         asyncio.set_event_loop(self._loop)
+
+        def _loop_exc_handler(loop, context):
+            exc = context.get("exception")
+            msg = context.get("message", "")
+            logger.error("asyncio 异常: %s %s", msg, exc)
+            try:
+                import traceback
+                with open("crash.log", "a", encoding="utf-8") as f:
+                    f.write(f"[asyncio] {msg}\n")
+                    if exc:
+                        f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+                    else:
+                        f.write(str(context) + "\n")
+            except Exception:
+                pass
+
+        self._loop.set_exception_handler(_loop_exc_handler)
         self._loop.run_forever()
 
     async def _init_async(self):
@@ -303,27 +338,38 @@ class VoiceStickApp:
         self._floatball.clear_text()
 
     def _on_ble_connected(self, device_name: str):
+        """BLE 连接回调 — asyncio 线程。仅做非 Qt 逻辑，UI 经主桥转发"""
         # 先执行 coordinator 的逻辑（重置 _recording、启动保活等）
         if self._coord_on_connected:
             self._coord_on_connected()
-        # 再执行 app.py 的逻辑
-        self._status_action.setText(f"已连接: {device_name}")
-        self._tray.setToolTip(f"Voice Cube — {device_name}")
-        self._floatball.set_connected(True)
         # 持久化上次连接的设备，重启后可直接重连
         self._config.last_connected_address = self._ble._last_address
         self._config.last_connected_name = self._ble._device_name
         self._config.save()
+        # UI 更新排队到主线程
+        self._main_bridge.connected_signal.emit(device_name)
+
+    def _on_ble_connected_ui(self, device_name: str):
+        """主线程：连接后的 UI 更新"""
+        self._status_action.setText(f"已连接: {device_name}")
+        self._tray.setToolTip(f"Voice Cube — {device_name}")
+        self._floatball.set_connected(True)
 
     def _on_ble_disconnected(self):
+        """BLE 断开回调 — asyncio 线程。仅做非 Qt 逻辑，UI 经主桥转发"""
         if self._coord_on_disconnected:
             self._coord_on_disconnected()
-        self._status_action.setText("状态: 已断开（重连中…）")
-        self._floatball.set_connected(False)
+        # UI 更新排队到主线程
+        self._main_bridge.disconnected_signal.emit()
         # 切换设备时由 _do_switch 负责连接，不触发自动重连
         if self._switching_device:
             return
         self._schedule_reconnect()
+
+    def _on_ble_disconnected_ui(self):
+        """主线程：断开后的 UI 更新"""
+        self._status_action.setText("状态: 已断开（重连中…）")
+        self._floatball.set_connected(False)
 
     def _polish_text(self, text: str):
         """同步包装：调用 LLM 润色（通过后台事件循环）"""
@@ -334,7 +380,11 @@ class VoiceStickApp:
         prompt = self._config.polish_prompt
         fut = asyncio.run_coroutine_threadsafe(
             self._coordinator._translator.polish(text, prompt), self._loop)
-        return fut.result(timeout=15)
+        try:
+            return fut.result(timeout=15)
+        except Exception as e:
+            logger.error("润色调用异常: %s", e)
+            return LLMTranslationResult("", error=f"润色失败: {e}")
 
     def _translate_text(self, text: str):
         """同步包装：调用 LLM 翻译（通过后台事件循环）"""
@@ -344,7 +394,11 @@ class VoiceStickApp:
             return LLMTranslationResult("", error="LLM 未配置（设置中填写 API Key）")
         fut = asyncio.run_coroutine_threadsafe(
             self._coordinator._translator.translate(text), self._loop)
-        return fut.result(timeout=15)
+        try:
+            return fut.result(timeout=15)
+        except Exception as e:
+            logger.error("翻译调用异常: %s", e)
+            return LLMTranslationResult("", error=f"翻译失败: {e}")
 
     def _save_floatball_pos(self):
         x, y = self._floatball.save_pos()

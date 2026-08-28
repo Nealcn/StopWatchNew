@@ -230,7 +230,11 @@ class FloatingBallWindow(QWidget):
             self.show_toast("暂无内容")
             return
         # 计算编辑器位置：在悬浮球旁边
-        scr = self.screen().availableGeometry()
+        screen = self.screen()
+        scr = screen.availableGeometry() if screen else None
+        if scr is None:
+            self.show_toast("无法打开编辑器")
+            return
         cx = self.x() + self.width() // 2
         cy = self.y() + self.height() // 2
         right = cx > scr.width() // 2
@@ -259,6 +263,8 @@ class FloatingBallWindow(QWidget):
     def _relayout(self):
         """根据屏幕位置重新布局（四象限自适应）"""
         if not self._has_text:
+            return
+        if self.screen() is None:
             return
         scr = self.screen().availableGeometry()
         cx = self.x() + self.width() // 2
@@ -337,6 +343,8 @@ class FloatingBallWindow(QWidget):
         self._clamp()
 
     def _clamp(self):
+        if self.screen() is None:
+            return
         scr = self.screen().availableGeometry()
         x = max(scr.left(), min(self.x(), scr.width() - self.width()))
         y = max(scr.top(), min(self.y(), scr.height() - self.height()))
@@ -413,11 +421,14 @@ class FloatingBallWindow(QWidget):
             if not t:
                 self.show_toast("暂无内容")
                 return
-            import os, datetime
-            path = os.path.join(os.getcwd(), "notes.md")
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(f"\n## {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{t}\n")
-            self.show_toast(f"已保存到 notes.md")
+            try:
+                import os, datetime
+                path = os.path.join(os.getcwd(), "notes.md")
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(f"\n## {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{t}\n")
+                self.show_toast(f"已保存到 notes.md")
+            except Exception as e:
+                self.show_toast(f"保存失败: {e}")
 
     def _run_async(self, cb, text):
         """Run callback (now sync) and update text on completion"""
