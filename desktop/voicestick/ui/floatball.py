@@ -106,7 +106,6 @@ class FloatingBallWindow(QWidget):
         self._translate_cb = None
 
         self._saved_x = self._saved_y = -1
-        self._edit_hint_done = False
         self._pos_small()
         self._init_pos()
 
@@ -210,10 +209,6 @@ class FloatingBallWindow(QWidget):
         self._relayout()
         self._clamp()
         self.update()
-        # 首次显示文字时提示可点击修改
-        if not self._edit_hint_done:
-            self._edit_hint_done = True
-            self.show_toast("点击文字可修改")
 
     # ========== 点击文字 → 非模态编辑窗口 ==========
 
