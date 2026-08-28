@@ -52,7 +52,7 @@ class FloatingBallWindow(QWidget):
 
         self._bridge = _Bridge()
         self._bridge.text_signal.connect(self._on_text)
-        self._bridge.clear_signal.connect(self.clear_text)
+        self._bridge.clear_signal.connect(self._on_clear)
         self._bridge.status_signal.connect(self._on_status)
 
         # ---- children ----
@@ -123,6 +123,12 @@ class FloatingBallWindow(QWidget):
             self._bridge.text_signal.emit(text, True, self._text_gen)
 
     def clear_text(self):
+        """线程安全：清空文字（经主桥排队到主线程执行）"""
+        self._bridge.clear_signal.emit()
+
+    @pyqtSlot()
+    def _on_clear(self):
+        """主线程：执行清空逻辑"""
         self._text_gen += 1
         self._accumulated.clear()
         self._text = ""
