@@ -103,11 +103,11 @@ public:
         if (!active_.load()) return;
         if (state_ == State::Idle) return;
         if (state_ == State::Rec) {
+            // 优雅停止：置标志让 RecordLoop 在下一次循环退出并自行清理
+            // （codec 关闭/编码器释放/结束帧）。不要 vTaskDelete——
+            // 任务可能正卡在 I2S 读取或 BLE 通知中途，直接删除会泄漏
+            // codec/编码器句柄，甚至打断 NimBLE 通知导致连接异常。
             record_stop_.store(true);
-            if (record_task_ != nullptr) {
-                vTaskDelete(record_task_);
-                record_task_ = nullptr;
-            }
         }
         // 发送 cancel_session 事件，通知桌面端终止 ASR 并清空文字
         framework::BleVoice::get().sendStateJson("{\"event\":\"cancel_session\"}");
