@@ -51,6 +51,7 @@ private:
     int udp_port_;
     uint32_t local_sequence_;
     uint32_t remote_sequence_;
+    uint32_t udp_send_count_ = 0;  // 诊断计数：UDP 音频包发送数
     esp_timer_handle_t reconnect_timer_;
 
     bool StartMqttClient(bool report_error=false);

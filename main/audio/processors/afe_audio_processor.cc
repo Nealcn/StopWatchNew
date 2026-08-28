@@ -10,6 +10,10 @@ AfeAudioProcessor::AfeAudioProcessor()
     event_group_ = xEventGroupCreate();
 }
 
+// 诊断计数（音频管线定位用）
+static uint32_t s_afeed_count = 0;   // 喂给 AFE 的块数
+static uint32_t s_afetch_count = 0;  // AFE 取出的处理结果数
+
 void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srmodel_list_t* models_list) {
     codec_ = codec;
     frame_samples_ = frame_duration_ms * 16000 / 1000;
@@ -65,8 +69,14 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
 #endif
 
     afe_iface_ = esp_afe_handle_from_config(afe_config);
-    afe_data_ = afe_iface_->create_from_config(afe_config);
-    
+    afe_data_ = (afe_iface_ != nullptr) ? afe_iface_->create_from_config(afe_config) : nullptr;
+    if (afe_iface_ == nullptr || afe_data_ == nullptr) {
+        ESP_LOGE(TAG, "AFE create FAILED: iface=%p data=%p", (void*)afe_iface_, (void*)afe_data_);
+    } else {
+        ESP_LOGI(TAG, "AFE created: feed_chunk=%u fetch_chunk=%u", afe_iface_->get_feed_chunksize(afe_data_),
+                 afe_iface_->get_fetch_chunksize(afe_data_));
+    }
+
     xTaskCreate([](void* arg) {
         auto this_ = (AfeAudioProcessor*)arg;
         this_->AudioProcessorTask();
@@ -90,6 +100,7 @@ size_t AfeAudioProcessor::GetFeedSize() {
 
 void AfeAudioProcessor::Feed(std::vector<int16_t>&& data) {
     if (afe_data_ == nullptr) {
+        ESP_LOGE(TAG, "Feed ignored: afe_data_ is null");
         return;
     }
 
@@ -103,6 +114,10 @@ void AfeAudioProcessor::Feed(std::vector<int16_t>&& data) {
     while (input_buffer_.size() >= chunk_size) {
         afe_iface_->feed(afe_data_, input_buffer_.data());
         input_buffer_.erase(input_buffer_.begin(), input_buffer_.begin() + chunk_size);
+        if (++s_afeed_count % 50 == 0) {
+            ESP_LOGI(TAG, "AFE feed x%u (chunk=%u, buf=%u)", s_afeed_count, (unsigned)chunk_size,
+                     (unsigned)input_buffer_.size());
+        }
     }
 }
 
@@ -133,6 +148,11 @@ void AfeAudioProcessor::OnVadStateChange(std::function<void(bool speaking)> call
 }
 
 void AfeAudioProcessor::AudioProcessorTask() {
+    if (afe_data_ == nullptr) {
+        ESP_LOGE(TAG, "AFE data is null, processor task cannot start");
+        vTaskDelete(nullptr);
+        return;
+    }
     auto fetch_size = afe_iface_->get_fetch_chunksize(afe_data_);
     auto feed_size = afe_iface_->get_feed_chunksize(afe_data_);
     ESP_LOGI(TAG, "Audio communication task started, feed size: %d fetch size: %d",
@@ -150,6 +170,10 @@ void AfeAudioProcessor::AudioProcessorTask() {
                 ESP_LOGI(TAG, "Error code: %d", res->ret_value);
             }
             continue;
+        }
+        if (++s_afetch_count % 50 == 0) {
+            ESP_LOGI(TAG, "AFE fetch x%u samples=%u vad=%d", s_afetch_count,
+                     (unsigned)(res->data_size / sizeof(int16_t)), (int)res->vad_state);
         }
 
         // VAD state change

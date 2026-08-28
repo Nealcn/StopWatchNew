@@ -185,6 +185,8 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
     if (!codec_->input_enabled()) {
         esp_timer_stop(audio_power_timer_);
         esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+        ESP_LOGI(TAG, "Input enabled, request %d samples @ %d (codec %d)", samples, sample_rate,
+                 codec_->input_sample_rate());
         codec_->EnableInput(true);
     }
 
@@ -215,6 +217,10 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
     /* Update the last input time */
     last_input_time_ = std::chrono::steady_clock::now();
     debug_statistics_.input_count++;
+    if (debug_statistics_.input_count % 200 == 0) {
+        ESP_LOGI(TAG, "MIC read x%u: %zu samples @%dHz (resampled)", debug_statistics_.input_count,
+                 data.size(), sample_rate);
+    }
 
 #if CONFIG_USE_AUDIO_DEBUGGER
     // 音频调试：发送原始音频数据
@@ -417,6 +423,10 @@ void AudioService::OpusCodecTask() {
                 auto ret = esp_opus_enc_process(opus_encoder_, &in, &out);
                 if (ret == ESP_AUDIO_ERR_OK) {
                     packet->payload.assign(buf.data(), buf.data() + out.encoded_bytes);
+                    if (debug_statistics_.encode_count % 50 == 0) {
+                        ESP_LOGI(TAG, "Opus encode x%u: %u bytes from %u samples", debug_statistics_.encode_count,
+                                 (unsigned)out.encoded_bytes, (unsigned)task->pcm.size());
+                    }
 
                     if (task->type == kAudioTaskTypeEncodeToSendQueue) {
                         {

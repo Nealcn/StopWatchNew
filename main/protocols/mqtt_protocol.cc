@@ -186,7 +186,12 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
         return false;
     }
 
-    return udp_->Send(encrypted) > 0;
+    int sent = udp_->Send(encrypted);
+    if (sent > 0 && ++udp_send_count_ % 50 == 0) {
+        ESP_LOGI(TAG, "UDP audio TX x%u: %u bytes, seq=%lu, ts=%lu", udp_send_count_,
+                 (unsigned)encrypted.size(), (unsigned long)local_sequence_, (unsigned long)packet->timestamp);
+    }
+    return sent > 0;
 }
 
 void MqttProtocol::CloseAudioChannel(bool send_goodbye) {
