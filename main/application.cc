@@ -302,6 +302,15 @@ void Application::Run() {
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
             }
+
+            // 聆听超时: 20 秒无语音 → 回待命
+            if (listening_start_time_ > 0) {
+                int64_t elapsed = (esp_timer_get_time() - listening_start_time_) / 1000;
+                if (elapsed > 20000) {
+                    SetDeviceState(kDeviceStateIdle);
+                    listening_start_time_ = 0;
+                }
+            }
         }
     }
 }
@@ -603,7 +612,9 @@ void Application::InitializeProtocol() {
                 Schedule([this]() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
-                            SetDeviceState(kDeviceStateIdle);
+                            SetDeviceState(kDeviceStateListening);
+                            // 手动对话: 播完后聆听 20 秒，超时自动回待命
+                            listening_start_time_ = esp_timer_get_time();
                         } else {
                             SetDeviceState(kDeviceStateListening);
                         }
@@ -808,6 +819,9 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
 
 void Application::HandleStartListeningEvent() {
     auto state = GetDeviceState();
+    
+    // 用户开始说话/按按钮时，重置聆听超时
+    listening_start_time_ = 0;
     
     if (state == kDeviceStateActivating) {
         SetDeviceState(kDeviceStateIdle);
