@@ -2,6 +2,7 @@
 
 > 最后更新: 2026-08-30
 > 所有改动基于 `main` 分支
+> **⚠️ 这些改动是有意为之的，以后更新固件时不要随意覆盖，除非专门需要改回来。**
 
 ---
 
@@ -82,7 +83,8 @@ Idle (待命)
   ├→ Speaking (主动推送)
   ├→ Listening (按按钮)
   ├→ Activating (重新激活)
-  └→ Upgrading (OTA)
+  ├→ Upgrading (OTA)
+  └→ PowerSave (长时间不动 → 睡觉)
 
 Listening (聆听)
   ├→ Speaking (用户说话)
@@ -91,6 +93,9 @@ Listening (聆听)
 Speaking (播报)
   ├→ Listening (播完 → 继续聆听 20 秒) ← 改动: 原来直接回 Idle
   └→ Idle (被中断/取消)
+
+PowerSave (睡觉)
+  └→ Idle (按按钮唤醒)
 ```
 
 ---
