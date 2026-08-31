@@ -57,7 +57,7 @@ public:
         tips->setTextColor(lv_color_hex(0xFFFFFF));
         tips->setTextFont(&lv_font_montserrat_10);
         tips->align(LV_ALIGN_TOP_LEFT, 82, 336);
-        tips->setText("如有问题请提供此信息:\n版本: Stackchan-Newstep M5StopWatch");
+        tips->setText("如有问题请提供此信息:\n版本: StopWatchNew M5StopWatch");
         _labels.push_back(std::move(tips));
     }
 

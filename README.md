@@ -1,207 +1,104 @@
-# Stackchan-Newstep: StackChan K151 单机多功能融合固件
+# StopWatchNew: M5StopWatch 智能手表固件
 
-基于 [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) 的 M5Stack Core S3 Stack-chan 增强固件（由 Stackchan-HtSz 演进）。在原版语音交互基础上增加了触摸、体感、情绪灯、舵机等**陪伴感**交互，并**新增红外家电遥控**——学习、发射、语音联动全链路，单机零外设完成「语音指令 → 云台对准家电 → 红外发码 → 表情反馈」闭环。
+基于 [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) 的 M5Stack **StopWatch** 手表固件（ESP32-S3 + 466×466 圆形 AMOLED）。保留土豆脸表情系统与云端 AI 对话，并在此基础上重构为**多功能手表系统**：主页面 Launcher + 语音转文字（VoiceCube 兼容）+ 表盘 + 设置。
 
+## 硬件
+
+| 部件 | 型号 |
+|---|---|
+| SoC | ESP32-S3（8MB PSRAM，16MB Flash） |
+| 屏幕 | CO5300 466×466 圆形 AMOLED（QSPI） |
+| 音频 | ES8311 编解码 + 麦克风/喇叭 |
+| 触摸 | CST820B 电容触摸 |
+| 按键 | 按键 1 / 按键 2（侧边） |
+| 电源 | M5PM1 PMIC + M5IOE1 IO 扩展 |
 
 ## 功能一览
 
-### 红外家电遥控（本项目新增 ⭐）
+### 主页面（Launcher）
 
-- **RMT 红外收发**：38kHz 载波，NEC / NEC-ext（16/32bit）协议编解码（`main/ir/`，独立模块）
-- **遥控屏学习（连续整套）**：**双指触摸屏幕**打开红外遥控屏 → 点灰色按键即进入学习 → 对准原装遥控器按按键 → 10 秒内自动捕获保存（完全离线）；学完一个键**无需退出**可连续学下一键，一台设备一次学完；**长按绿色按键重新学习**、**长按设备条目删除整套**
-- **语音学习（全程对话引导）**：说「帮我学一下空调遥控器」→ LLM 逐键语音引导（请按电源键/温度+…）→ 设备自动捕获保存并回传结果 → 学完当场可用（详见[使用指南](#语音控制需小智云端-llm-支持-mcp)）
-- **码库持久化**：NVS 存储（设备/按键/协议+码值），重启不丢，支持 JSON 导入导出
-- **语音联动（MCP 工具）**：
-  - `self.ir.send(device, key)` — 发射指定设备按键码（失败时返回可用设备清单）
-  - `self.ir.learn_start(device, key)` — 异步语音学习一个按键（捕获成功/超时自动回复）
-  - `self.ir.list()` — 查询已学设备与按键
-  - `self.ir.delete(device, key?)` — 删除设备（整套）或单个按键
-  - `self.servo.pan(yaw, pitch, device?)` — 云台转向对准家电；带 `device` 时把当前角度保存为该设备方位预设（「记下空调的位置」）
-- **反馈闭环（FR-08）**：发码成功 LED 绿闪+点头、失败红闪+通知、学习中蓝色常亮
-- **硬件细节**：发码期间自动暂停摄像头采集（防电磁干扰，RS-1）；红外引脚 G5(IR_SEND)/G10(IR_REC)
-- **逻辑测试**：NEC 编解码主机端镜像测试 38/38（`tools/nec_codec_test.py`，含重复帧/抖动/边界）
+- 开机显示主页面，4 个功能图标：**AI 对话 / 语音转文字 / 表盘 / 设置**
+- 按键 1/2 切换功能，**触摸点击图标**进入
+- **A+B 双键同时按**随时返回主页面
 
-### SD 卡与拍照存卡（本项目新增 ⭐）
+### AI 对话（土豆脸）
 
-- **TF 卡（microSD）**：CoreS3 原生卡槽（下巴位置），SPI 模式，挂载 `/sdcard`（20MHz 起步，失败自动降速重试；**挂载失败不阻塞开机**）
-- **拍照存卡**：语音「**拍张照存到卡里**」→ 拍照 → JPEG 编码（硬件加速）→ 存 `/sdcard/photos/`（时间戳命名，可指定文件名）→ 语音回传保存路径；取出 TF 卡即可在电脑查看
-- **技术说明**：TF 与 LCD 共用 SPI3 总线，GPIO35 为 LCD-DC/SD-MISO 复用引脚（espressif BSP 已知限制「SD 与 LCD 不能同时工作」）——本项目通过**操作期间切引脚方向 + 暂停 LCD 刷新**解决，写卡窗口约 100-200ms（屏幕短暂定格属正常）
+- 土豆脸表情系统：21 种表情（开心/生气/思考/害羞…）+ 叠加效果（脸红/爱心眼/气泡…）
+- **触摸屏幕随机表情反馈**：每次触摸随机换一个表情，2 秒后恢复
+- 小智云端流式对话（ASR/LLM/TTS），唤醒词「土豆土豆」
+- 对话字幕 + 状态栏（WiFi/电量）
 
-### 头顶触摸 (SI12T)
+### 语音转文字（VoiceCube 兼容）
 
-- 3区电容触摸，摸头触发对话
-- 7条随机触摸回应文本（可自定义）
-- 5秒触发冷却
-- 抗EMI：0xCC灵敏度 + 12秒FTC校准等待（基于 M5Stack BSP 参考实现和 TS12 datasheet）
+- **按住按键 1 说话** → 环形点波动画（中心圆 + 12 环绕圆点随音量波动）
+- 音频经 BLE 发送到桌面端 → 云端 ASR → 识别结果**屏幕预览** → 确认后粘贴到当前窗口
+- 状态颜色：已连接=绿 / 录音中=红 / 识别中=黄 / 结果=蓝
+- **按键 2** 清除当前录音
+- 桌面端见 [desktop/voicestick](desktop/voicestick)（多设备切换、点击文字编辑）
 
-### 体感检测 (BMI270)
+### 表盘
 
-- **摇晃检测**：摇一摇触发互动
-- **抱起检测**：拿起来触发互动
-- 5分钟全局冷却，armed/disarmed 状态机
-- 自定义 BMI270 驱动（地址 0x69，绕过 SDK 默认 0x68）
+- 4 种表盘样式：经典指针 / 简约 / 大数字 / 数字流
+- 按键 1 上一个 / 按键 2 下一个，1 秒自动刷新
 
-### 屏幕触摸 (FT6336)
+### 设置
 
-- 单击开关对话、双击、上下左右滑动、长按 6 种手势
-- 60 条随机动作文本（可自定义）；**双指触摸打开红外遥控屏**
+- 设备：亮度 / 音量 / WiFi 配网
+- 时间与日期：手动设置
+- 系统：清除 AI 配置（恢复出厂联网状态）
 
-### WS2812 情绪灯环
+## 交互速查
 
-- 12颗 LED，通过 PY32 IO Expander (0x6F) 控制
-- 21种情绪对应颜色映射，跟表情同步变化
-- MCP 工具支持：`self.led.set_color`、`self.led.turn_off`、`self.led.auto`
-- 红外反馈色：学习蓝 / 成功绿 / 失败红
-
-### 舵机 (SCS 总线)
-
-- 摄像头人脸追踪 (GC0308)
-- 空闲扫视动画
-- 对话时暂停/恢复；语音联动时转向家电方位（2s 后自动恢复跟随）
-
-### 其他
-
-- 早安问候（工作日定时，SNTP 延迟启动避免 tcpip panic）
-- 自定义唤醒词「土豆土豆」（Multinet6）
-- 摄像头拍照（MCP 工具 `self.camera.take_photo`）
-- 电池监测 + 低电量提醒
-- I2C 错误容错处理（防止偶发超时导致整机重启）
-
-## 红外遥控使用指南
-
-### 学习新码（触摸屏）
-
-1. **双指同时触摸屏幕** → 打开「红外遥控」屏
-2. 点「＋ 学习新设备」（或进入已有设备）
-3. 点**灰色按键**（电源/温度±/模式/风速/摆风/定时/静音）→ 进入学习
-4. 10 秒内对准原装遥控器按对应按键 → 状态显示「已保存」，按键**变绿**
-5. 点绿色按键即可发射；左上角「返回」回到聊天界面
-
-### 语音控制（需小智云端 LLM 支持 MCP）
-
-| 你说 | 效果 |
+| 操作 | 效果 |
 |---|---|
-| 「打开客厅空调」 | 云台转向空调方位 → 发射电源码 → 绿闪+点头+语音反馈 |
-| 「把空调调到 25 度」 | LLM 调 `self.ir.send` 发温度码 |
-| 「记下空调的位置」 | 云台转到当前角度并保存为该设备方位预设（DAT-2） |
-| 「帮我学一下空调遥控器」 | **语音学习**：LLM 逐键引导完成整套学习（`self.ir.learn_start` 异步） |
-| 「学了哪些设备？」 | `self.ir.list` 查询码库 |
-| 「删掉电视遥控器」 | `self.ir.delete` 删除整套 |
-
-### 动作与表情（语音）
-
-| 你说 | 效果 |
-|---|---|
-| 「早上好」「夸你一下」 | 点头回应（`self.servo.nod`） |
-| 「给我唱首歌吧」（做不到时） | 摇头婉拒（`self.servo.shake`） |
-| 「转回去看前面」 | 云台归位（`self.servo.home`），2s 后恢复跟随 |
-| 「做个鬼脸！」「装难过」「笑一个」 | 指定表情（`self.face.set_emotion`），自动联动舵机动画+情绪灯 |
-
-### 已知限制
-
-- 首期仅支持 NEC/NEC-ext 协议；Sony/RC-5 等协议暂未实现（码库按协议存储，后续可扩展）
-- 语音学习依赖云端 LLM 正确调用 MCP 工具，**断网时不可用**；屏内学习/发射完全离线可用
-- 工具描述通用化，新学设备**当场可用**，无需重启
+| 按键 1 / 2 | 主页面切换功能；页面内导航 |
+| 触摸点击图标 | 进入功能 |
+| A+B 同时按 | 返回主页面（任何页面） |
+| 按住按键 1（语音页） | 录音 |
+| 触摸屏幕（AI 对话页） | 随机表情反馈 |
 
 ## 编译 & 烧录
 
-### 环境要求
+### 环境
 
-- **ESP-IDF ≥ 5.5.2**（`main/idf_component.yml` 要求）
-- **设备**：M5Stack StackChan K151（Core S3），串口按实际修改
+- ESP-IDF v5.5.4（IDF_PATH=D:\esp-idf）
+- Windows：`_idf_build_env.bat` 封装了环境变量（含 ESP_ROM_ELF_DIR）
 
 ### 编译
 
-```bash
-idf.py set-target esp32s3
-idf.py build
+```bat
+_idf_build_env.bat build
 ```
-
-> Windows 下若使用 Git Bash/MSys2 报 `MSys/Mingw is no longer supported`，请用 cmd.exe 或仓库内的 `build.bat`（注意：bat 中为作者本机路径，需按环境修改 `IDF_PATH`/`IDF_TOOLS_PATH`）。
 
 ### 烧录
 
-```bash
-idf.py -p COM端口 flash
+```bat
+_idf_build_env.bat -p COM8 flash
 ```
 
-`idf.py flash` 通过 RTS/DTR 自动进入下载模式，无需手动按键。首次烧录或分区表变更后需写入全部分区（见 `partitions/v1/16m_stackchan.csv`）。
-
-### 代码风格检查（可选）
-
-```bash
-clang-format --dry-run --Werror main/ir/*.cc main/ir/*.h \
-    main/boards/m5stack-core-s3/ir_remote_screen.cc \
-    main/boards/m5stack-core-s3/ir_remote_screen.h
-```
-
-## 配置
-
-编译前修改 `sdkconfig.defaults`：
-
-```
-CONFIG_BOARD_TYPE_M5STACK_CORE_S3=y
-CONFIG_USE_CUSTOM_WAKE_WORD=y
-CONFIG_CUSTOM_WAKE_WORD="tu dou tu dou"
-CONFIG_CUSTOM_WAKE_WORD_DISPLAY="土豆土豆"
-CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=35
-CONFIG_OTA_URL="http://你的服务器IP:8003/xiaozhi/ota/"
-```
-
-红外参数（引脚/载波/超时）见 `main/ir/ir_config.h`。
-
-## 服务端
-
-本固件配合 [xiaozhi-esp32-server](https://github.com/78/xiaozhi-esp32-server) 使用。需要在服务端配置 LLM 和 TTS。
-
-> 自部署服务端安全提醒：① websocket/http 端口勿暴露公网；② `config.yaml` 的 `auth.enabled` 务必为 `true` + MAC 白名单；③ API Key 勿明文写入配置；④ 小智有摄像头调用能力，端口裸奔等于把摄像头开放给任何人。
-
-## 文档
-
-| 文档 | 说明 |
-|---|---|
-| [docs/功能描述与使用手册.md](docs/功能描述与使用手册.md) | 功能全景 + 操作步骤 + 语音口令速查（交付物 D-2） |
-| [docs/开发需求文档.md](docs/开发需求文档.md) | PRD（V1.1：需求、验收标准、阶段规划） |
-| [docs/架构设计文档.md](docs/架构设计文档.md) | 架构设计（V1.2：IR 模块、MCP 扩展、ADR、TC） |
-| [docs/开发计划.md](docs/开发计划.md) | 开发计划（V1.1：异地验证工作流） |
-| [docs/基线盘点与清理分析.md](docs/基线盘点与清理分析.md) | 基线实证与清理报告 |
-| [docs/验证机编译验证说明.md](docs/验证机编译验证说明.md) | 验证机编译流程 + 12 条冒烟用例 |
-
-## 自定义
-
-`m5stack_core_s3.cc` 中的触摸文本、手势动作、早安问候等使用通用占位符。替换成你自己的人设文本即可。
-
-主要自定义点：
-- **触摸回应**：搜索 `msgs[]` 数组
-- **手势动作池**：搜索 `DoubleClickPool`、`UpSwipePool` 等函数
-- **早安问候**：搜索 `MorningLoop`
-- **情绪灯颜色**：搜索 `UpdateLedsFromEmotion`
-- **红外预设键**：`main/boards/m5stack-core-s3/ir_remote_screen.cc` 的 `kPresetKeys`
-- **红外参数/引脚**：`main/ir/ir_config.h`
+（手表串口以实际为准，一般 COM8）
 
 ## 目录结构（本项目新增部分）
 
 ```
-main/
-├── ir/                            # ★ 红外模块（独立目录）
-│   ├── ir_driver.*                # RMT 收发驱动（38kHz 载波）
-│   ├── ir_codec.* + ir_codec_nec.* # 协议编解码与注册表
-│   ├── ir_store.*                 # NVS 码库持久化 + JSON 导入导出
-│   └── ir_service.*               # 学习/发射编排 + RS-1 摄像头暂停挂钩
-├── sd/                            # ★ SD 卡模块
-│   ├── sd_card.*                  # TF 挂载/文件读写（GPIO35 方向守卫 + LVGL 暂停）
-│   └── sd_photo.*                 # 拍照存卡（image_to_jpeg 复用）
-└── boards/m5stack-core-s3/
-    ├── ir_remote_screen.*         # ★ LVGL 红外遥控屏（双指打开）
-    └── m5stack_core_s3.cc         # 板级集成：MCP 工具/反馈/手势让渡
+main/boards/m5stack-stopwatch/
+├── m5stack_stopwatch.cc      # 板级初始化（显示/触摸/按键/A+B 组合键）
+├── launcher.h                # 主页面（4 功能图标 + 位移动画）
+├── potato_face.h             # 土豆脸表情系统 + 触摸随机表情
+├── voice_input.h             # 语音转文字（BLE + 环形点波 UI）
+├── watch_face.h + watch_face_view/   # 表盘（原版 app_watch_face）
+├── setup.h + setup_view/ + setup_workers/  # 设置（原版 app_setup）
+├── ble_voice.cc/h            # NimBLE 语音服务（VoiceCube 兼容）
+└── cst820.cc/h               # CST820B 触摸驱动
+
+desktop/voicestick/           # 语音转文字桌面端（PyQt5 + BLE + 云端 ASR）
 ```
 
-## 致谢
+## 文档
 
-- [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) — 基础固件
-- [M5Stack StackChan-BSP](https://github.com/m5stack/StackChan-BSP) — SI12T 驱动参考
-- [TS12 Datasheet](http://file2.dzsc.com/product/18/09/06/1114361_130715119.pdf) — 触摸传感器寄存器文档
+- [docs/stopwatch改造进度.md](docs/stopwatch改造进度.md) — 改造过程与排障记录（含 Launcher/触摸/语音输入/图标居中/字体等排障）
+- 其余 docs/ 为历史开发文档（旧机器人项目遗留）
 
 ## License
 
-同上游 [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32)（MIT）。
+基于 xiaozhi-esp32（MIT），其余见各组件 LICENSE。
