@@ -10,6 +10,8 @@ class WifiBoard : public Board {
 protected:
     esp_timer_handle_t connect_timer_ = nullptr;
     esp_timer_handle_t wifi_config_delay_timer_ = nullptr;   // 8-second delay before allowing config on tap
+    esp_timer_handle_t wifi_keepalive_timer_ = nullptr;      // 60s WiFi 保活，断线静默重连
+    bool wifi_connected_ = false;                           // WiFi 连接状态，供 keepalive 使用
     bool in_config_mode_ = false;
     bool wifi_config_ready_ = false;   // Set after 8s when no saved SSID, enables tap to config
     NetworkEventCallback network_event_callback_ = nullptr;
@@ -37,6 +39,11 @@ protected:
      * WiFi connection timeout callback
      */
     static void OnWifiConnectTimeout(void* arg);
+
+    /**
+     * WiFi keepalive callback — checks WiFi status every 60s, reconnects silently if disconnected
+     */
+    static void OnWifiKeepalive(void* arg);
 
     /**
      * 8-second delay timer callback — sets wifi_config_ready_ flag so a tap enters config mode

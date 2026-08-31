@@ -31,9 +31,13 @@ private:
     TaskHandle_t reconnect_task_ = nullptr;
     int reconnect_delay_sec_ = 30;        // 重连退避: 30s 起步, 上限 300s
 
+    // ==== 连接保活: 定时 WebSocket Ping ====
+    TaskHandle_t keep_alive_task_ = nullptr;  // 每 30s 发 ping 防 NAT 断线
+
     bool ConnectInternal();
     void ScheduleReconnect();
     static void ReconnectTask(void* arg);
+    static void KeepAliveTask(void* arg);
 
     void ParseServerHello(const cJSON* root);
     bool SendText(const std::string& text) override;
