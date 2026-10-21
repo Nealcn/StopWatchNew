@@ -595,6 +595,18 @@ void Application::InitializeProtocol() {
             auto state = cJSON_GetObjectItem(root, "state");
             if (strcmp(state->valuestring, "start") == 0) {
                 tts_start_pending_.store(true);  // 立即放行先到的音频帧（gate 竞态加固）
+
+                // 主动推送/播报 → 震一下；正常对话的回答不震。
+                // 判据不是设备状态 —— 实测推送到达时设备常停在 Listening（对话结束后不进 Idle），
+                // 用"本轮有没有用户语音"更可靠：正常对话前一定先收到 stt，主动推送没有。
+                const bool is_push = !user_spoke_for_turn_;
+                user_spoke_for_turn_ = false;
+                ESP_LOGI(TAG, "tts start: is_push=%d -> %s", (int)is_push,
+                         is_push ? "vibrate" : "no-vibrate");
+                if (is_push) {
+                    Board::GetInstance().Vibrate(120, 100);
+                }
+
                 Schedule([this]() {
                     aborted_ = false;
                     // 通道未开先开（MQTT 创建 UDP / WS 创建连接），修复「假 Speaking」无声；
@@ -633,6 +645,7 @@ void Application::InitializeProtocol() {
             auto text = cJSON_GetObjectItem(root, "text");
             if (cJSON_IsString(text)) {
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
+                user_spoke_for_turn_ = true;  // 本轮是用户语音触发的对话（不是主动推送）
                 Schedule([display, message = std::string(text->valuestring)]() {
                     display->SetChatMessage("user", message.c_str());
                 });

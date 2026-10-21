@@ -72,6 +72,10 @@ public:
      * 状态机（供组件注册状态变化回调，例如看板卡片在用户再次开口时收起）
      */
     DeviceStateMachine& GetStateMachine() { return state_machine_; }
+
+    // 本轮是否有用户语音（收到过 stt）。用于区分"正常对话的回答"和"主动推送"：
+    // 正常对话前一定先来 stt；主动推送（/mcp/device/speak）没有。
+    bool user_spoke_for_turn_ = false;
     
     /**
      * Request state transition

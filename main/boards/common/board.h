@@ -83,6 +83,12 @@ public:
     virtual std::string GetBoardJson() = 0;
     virtual std::string GetDeviceStatusJson() = 0;
 
+    // 触觉反馈（震动马达）。默认空实现，带马达的板子自行 override
+    virtual void Vibrate(uint16_t duration_ms, uint8_t strength = 100) {
+        (void)duration_ms;
+        (void)strength;
+    }
+
     // Launcher（主页面）接口：默认无 launcher，其他板不受影响
     virtual bool IsLauncherVisible() const { return false; }
     virtual void ShowLauncher(bool show) { (void)show; }

@@ -348,6 +348,19 @@ void McpServer::AddUserOnlyTools() {
             return true;
         });
 
+    // 震动探针：模型不可见，只能经 /mcp/device/call 驱动 —— 用来验证马达 PWM 通道
+    AddUserOnlyTool("self.motor.vibrate", "Vibrate the motor briefly",
+        PropertyList({
+            Property("duration", kPropertyTypeInteger, 10, 3000),   // ms
+            Property("strength", kPropertyTypeInteger, 0, 100)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            Board::GetInstance().Vibrate(
+                (uint16_t)properties["duration"].value<int>(),
+                (uint8_t)properties["strength"].value<int>());
+            return true;
+        });
+
     // Firmware upgrade
     AddUserOnlyTool("self.upgrade_firmware", "Upgrade firmware from a specific URL. This will download and install the firmware, then reboot the device.",
         PropertyList({

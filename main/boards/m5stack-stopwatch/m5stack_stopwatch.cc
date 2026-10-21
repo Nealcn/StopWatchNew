@@ -22,6 +22,9 @@
 #include <driver/spi_master.h>
 #include <wifi_manager.h>
 #include <lvgl.h>
+#include <mutex>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #define TAG "M5StackStopwatch"
 #define LCD_OPCODE_WRITE_CMD (0x02ULL)
@@ -88,6 +91,12 @@ private:
     int64_t btn1_down_us_ = 0;
     int64_t btn2_down_us_ = 0;
     int64_t last_combo_us_ = -1000000000LL;
+    // ---- 震动马达（IO9 → IOE PWM 通道 0）----
+    TaskHandle_t vib_task_     = nullptr;
+    std::mutex   vib_mutex_;
+    bool         vib_on_       = false;
+    uint8_t      vib_strength_ = 0;
+    TickType_t   vib_end_tick_ = 0;
 
     // LVGL 触摸输入读取回调
     static void TouchReadCb(lv_indev_t* indev, lv_indev_data_t* data) {
@@ -182,6 +191,11 @@ private:
         ioe_.pinMode(IOE_PIN_MOTOR, OUTPUT);
         ioe_.setDriveMode(IOE_PIN_MOTOR, M5IOE1_DRIVE_PUSHPULL);
         ioe_.digitalWrite(IOE_PIN_MOTOR, LOW);
+
+        // 马达 PWM：频率 4 个通道共用，5000Hz 避开可闻啸叫
+        ioe_.setPwmFrequency(5000);
+        ioe_.setPwmDuty(IOE_PIN_MOTOR_PWM_CH, 0, false, true);
+        xTaskCreate(&M5StackStopwatchBoard::VibTaskEntry, "vib", 3072, this, 4, &vib_task_);
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -289,6 +303,52 @@ private:
         // 主页面期间关唤醒词（Idle 时）
         if (app.GetDeviceState() == kDeviceStateIdle) {
             app.GetAudioService().EnableWakeWordDetection(false);
+        }
+    }
+
+    // ---------------- 震动马达 ----------------
+    static uint8_t DutyFromStrength(uint8_t strength) {
+        if (strength == 0) return 0;
+        if (strength > 100) strength = 100;
+        return 25 + (static_cast<uint32_t>(strength) * 75) / 100;  // 25%~100%，太低起转不了
+    }
+
+    static void VibTaskEntry(void* arg) {
+        static_cast<M5StackStopwatchBoard*>(arg)->VibTask();
+    }
+
+    // 独立任务里操作 IOE：避免在 LVGL / Application 主任务上下文里做 I2C 阻塞
+    void VibTask() {
+        uint8_t current = 0;
+        ioe_.setPwmDuty(IOE_PIN_MOTOR_PWM_CH, 0, false, true);
+        while (true) {
+            TickType_t now  = xTaskGetTickCount();
+            TickType_t wait = portMAX_DELAY;
+            bool on         = false;
+            uint8_t target  = 0;
+            {
+                std::lock_guard<std::mutex> lock(vib_mutex_);
+                if (vib_on_) {
+                    if (now < vib_end_tick_) {
+                        wait   = vib_end_tick_ - now;
+                        on     = true;
+                        target = vib_strength_;
+                    } else {
+                        vib_on_ = false;
+                    }
+                }
+            }
+            if (on) {
+                if (current != target) {
+                    ioe_.setPwmDuty(IOE_PIN_MOTOR_PWM_CH, DutyFromStrength(target), false, true);
+                    current = target;
+                }
+            } else if (current != 0) {
+                ioe_.setPwmDuty(IOE_PIN_MOTOR_PWM_CH, 0, false, true);
+                current = 0;
+                wait    = portMAX_DELAY;
+            }
+            ulTaskNotifyTake(pdTRUE, wait);
         }
     }
 
@@ -427,6 +487,17 @@ public:
                     DismissCard();
                 }
             });
+    }
+
+    // 触觉反馈：只写状态 + 通知任务，不在调用方上下文里做 I2C
+    void Vibrate(uint16_t duration_ms, uint8_t strength) override {
+        {
+            std::lock_guard<std::mutex> lock(vib_mutex_);
+            vib_on_       = true;
+            vib_strength_ = strength;
+            vib_end_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(duration_ms);
+        }
+        if (vib_task_) xTaskNotifyGive(vib_task_);
     }
 
     AudioCodec* GetAudioCodec() override {

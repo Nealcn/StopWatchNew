@@ -57,6 +57,8 @@
 #define IOE_PIN_CODEC_POWER         M5IOE1_PIN_3
 #define IOE_PIN_PA_EN               M5IOE1_PIN_10
 #define IOE_PIN_MOTOR               M5IOE1_PIN_9
+// IO9 → M5IOE1 PWM 通道 0（别写成 3：通道 3 对应 IO10 = IOE_PIN_PA_EN 功放使能）
+#define IOE_PIN_MOTOR_PWM_CH        M5IOE1_PWM_CH1
 
 // M5PM1 @ 0x6E
 #define PMIC_PIN_CHARGE_STATE       M5PM1_GPIO_NUM_2
