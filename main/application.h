@@ -67,6 +67,11 @@ public:
 
     DeviceState GetDeviceState() const { return state_machine_.GetState(); }
     bool IsVoiceDetected() const { return audio_service_.IsVoiceDetected(); }
+
+    /**
+     * 状态机（供组件注册状态变化回调，例如看板卡片在用户再次开口时收起）
+     */
+    DeviceStateMachine& GetStateMachine() { return state_machine_; }
     
     /**
      * Request state transition

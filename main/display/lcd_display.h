@@ -36,6 +36,7 @@ protected:
     esp_timer_handle_t subtitle_timer_ = nullptr;  // 字幕自动消失定时器（停止更新 8s 后清空）
     std::unique_ptr<LvglImage> preview_image_cached_ = nullptr;
     bool hide_subtitle_ = false;  // Control whether to hide chat messages/subtitles
+    lv_coord_t chat_bar_bottom_off_ = 0;  // 圆屏字幕上移量，见 SetChatBarBottomOffset
 
     void InitializeLcdThemes();
     virtual bool Lock(int timeout_ms = 0) override;
@@ -57,6 +58,10 @@ public:
     
     // Set whether to hide chat messages/subtitles
     void SetHideSubtitle(bool hide);
+
+    // 圆屏：字幕条距底部的偏移（负值 = 上移）。板级 SetupUI 里设一次，
+    // 之后每次 SetChatMessage 重新贴底时都会带上它，不会被重置回屏幕最底部。
+    void SetChatBarBottomOffset(lv_coord_t off) { chat_bar_bottom_off_ = off; }
 };
 
 // SPI LCD display

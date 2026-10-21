@@ -79,6 +79,10 @@ CONFIG_LV_USE_FONT_COMPRESSED=n
 CONFIG_LV_USE_FONT_PLACEHOLDER=n
 CONFIG_LV_USE_LODEPNG=y
 
+# 看板页（app_board.h）：PNG 解码结果 = 466×466 ARGB8888 = 868624 B，
+# 缓存必须 ≥ 一帧，否则 add_to_cache 失败 → 图片根本不显示（不是画不出来）
+CONFIG_LV_CACHE_DEF_SIZE=1572864
+
 # Enable multiline chat message display (grows upward from bottom, word-wrapped)
 CONFIG_USE_MULTILINE_CHAT_MESSAGE=y
 

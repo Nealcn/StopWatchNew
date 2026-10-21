@@ -98,6 +98,15 @@ private:
             data->point.y = self->touch_.getY();
             // 触摸活动 → 重置空闲计时
             Application::GetInstance().ResetIdleTimer();
+            // 触摸 = 下一次交互：收起看板卡片。
+            // 本回调在 LVGL 任务上下文且已持显示锁，直接调 SetPreviewImage 会死锁 → 转发到主任务
+            if (self->display_ != nullptr && self->display_->CardMode()) {
+                Application::GetInstance().Schedule([self]() {
+                    if (self->display_ != nullptr && self->display_->CardMode()) {
+                        self->display_->SetPreviewImage(nullptr);
+                    }
+                });
+            }
         } else {
             data->state = LV_INDEV_STATE_REL;
         }
@@ -245,8 +254,16 @@ private:
         HandleGoHome();
     }
 
+    // 收起看板卡片（锁由 SetPreviewImage 自己取；勿在已持显示锁的上下文调用）
+    void DismissCard() {
+        if (display_ != nullptr && display_->CardMode()) {
+            display_->SetPreviewImage(nullptr);
+        }
+    }
+
     void HandleGoHome() {
         auto& app = Application::GetInstance();
+        DismissCard();
         // 语音输入/表盘模式：退出
         if (voice_input_.IsActive()) {
             voice_input_.Exit();
@@ -312,6 +329,7 @@ private:
         button1_.OnPressDown([this]() {
             // 按键活动 → 重置空闲计时
             Application::GetInstance().ResetIdleTimer();
+            DismissCard();
             // 先记录时间戳并检测 A+B 组合键（语音模式下也可返回主页面）
             btn1_down_us_ = esp_timer_get_time();
             MaybeTriggerCombo();
@@ -329,6 +347,7 @@ private:
             btn2_down_us_ = esp_timer_get_time();
             // 按键活动 → 重置空闲计时
             Application::GetInstance().ResetIdleTimer();
+            DismissCard();
             MaybeTriggerCombo();
         });
         button1_.OnPressUp([this]() {
@@ -399,6 +418,15 @@ public:
         InitializeDisplay();
         InitializeTouch();
         InitializeButtons();
+        // 用户**发起新一轮**（唤醒词/按键：connecting → listening）→ 收起看板卡片。
+        // 注意：不能"见到 Listening 就收" —— 助手说完话也会自动回到 Listening，
+        // 那会在回复刚结束时把卡片误收掉（实测踩过）。
+        Application::GetInstance().GetStateMachine().AddStateChangeListener(
+            [this](DeviceState from, DeviceState to) {
+                if (to == kDeviceStateListening && from == kDeviceStateConnecting) {
+                    DismissCard();
+                }
+            });
     }
 
     AudioCodec* GetAudioCodec() override {

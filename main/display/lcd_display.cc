@@ -1022,6 +1022,11 @@ void LcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
         if (gif_controller_) {
             gif_controller_->Start();
         }
+        if (card_mode_) {  // 卡片收起：恢复创建时的尺寸，别影响后续普通预览
+            card_mode_ = false;
+            lv_obj_set_size(preview_image_, width_ / 2, height_ / 2);
+            ESP_LOGI(TAG, "Card image cleared");
+        }
         return;
     }
 
@@ -1040,7 +1045,19 @@ void LcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
     lv_obj_add_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
     esp_timer_stop(preview_timer_);
-    ESP_ERROR_CHECK(esp_timer_start_once(preview_timer_, PREVIEW_IMAGE_DURATION_MS * 1000));
+    if (card_mode_) {
+        // 卡片模式：按屏宽等比铺满（466×466 出图时正好 1:1），并盖到状态栏/字幕之上；
+        // 不启动 preview_timer_ —— 一直留到下次交互由 SetPreviewImage(nullptr) 收起
+        lv_obj_set_size(preview_image_, width_, height_);
+        if (img_dsc->header.w > 0) {
+            lv_image_set_scale(preview_image_, 256 * width_ / img_dsc->header.w);
+        }
+        lv_obj_align(preview_image_, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_move_foreground(preview_image_);
+        ESP_LOGI(TAG, "Card image shown: %d x %d", img_dsc->header.w, img_dsc->header.h);
+    } else {
+        ESP_ERROR_CHECK(esp_timer_start_once(preview_timer_, PREVIEW_IMAGE_DURATION_MS * 1000));
+    }
 }
 
 void LcdDisplay::SetChatMessage(const char* role, const char* content) {
@@ -1067,7 +1084,9 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
     // Re-align bottom_bar_ after text change so it stays anchored to the bottom
     // as its height adapts to the wrapped content.
     if (bottom_bar_ != nullptr) {
-        lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, 0);
+        // 重新贴底，但**必须带上板级设的偏移**：圆屏靠它把字幕抬离底部圆弧。
+        // 之前这里写死 0，每次更新字幕都把偏移抹掉 → 字幕掉到屏幕最底被圆弧切掉。
+        lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, chat_bar_bottom_off_);
     }
 #endif
     // 字幕自动消失：消息更新即续期，停止更新 8s 后清空（说话期间持续更新不消失）

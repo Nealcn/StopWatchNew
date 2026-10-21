@@ -24,7 +24,14 @@ public:
     virtual void UpdateStatusBar(bool update_all = false);
     virtual void SetPowerSaveMode(bool on);
 
+    // 看板卡片模式（聊天中 AI 回复的图）：铺满全屏 + 不自动消失，
+    // 一直留到下次交互由 SetPreviewImage(nullptr) 收起。见 lcd_display.cc。
+    void SetCardMode(bool on) { card_mode_ = on; }
+    bool CardMode() const { return card_mode_; }
+
 protected:
+    bool card_mode_ = false;
+
     esp_pm_lock_handle_t pm_lock_ = nullptr;
     lv_display_t *display_ = nullptr;
 

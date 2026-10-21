@@ -159,10 +159,10 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
 #endif
             in_config_mode_ = false;
             ESP_LOGI(TAG, "Connected to WiFi: %s", data.c_str());
-            board->wifi_connected_ = true;
+            wifi_connected_ = true;
             // Start 60s WiFi keepalive (silent)
-            if (board->wifi_keepalive_timer_) {
-                esp_timer_start_periodic(board->wifi_keepalive_timer_, 60000000);
+            if (wifi_keepalive_timer_) {
+                esp_timer_start_periodic(wifi_keepalive_timer_, 60000000);
             }
             break;
         case NetworkEvent::Scanning:
@@ -173,7 +173,7 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
             break;
         case NetworkEvent::Disconnected:
             ESP_LOGW(TAG, "WiFi disconnected");
-            board->wifi_connected_ = false;
+            wifi_connected_ = false;
             // Reset the config ready flag so a subsequent tap will go through
             // the 8-second delay again if the board transitions back to Starting
             wifi_config_ready_ = false;

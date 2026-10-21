@@ -58,6 +58,8 @@ public:
         // Chat/subtitle text: a bit higher, away from bottom arc
         if (bottom_bar_ != nullptr) {
             lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, -DISPLAY_CHAT_BAR_BOTTOM_OFF);
+            // 告诉基类这个偏移：SetChatMessage 每次重新贴底时要用（写死 0 会把字幕压回屏幕最底被圆弧切）
+            SetChatBarBottomOffset(-DISPLAY_CHAT_BAR_BOTTOM_OFF);
             lv_obj_set_width(chat_message_label_, LV_HOR_RES * 0.75);
         }
 

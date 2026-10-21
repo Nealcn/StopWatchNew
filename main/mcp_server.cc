@@ -18,7 +18,207 @@
 #include "lvgl_theme.h"
 #include "lvgl_display.h"
 
+#include <sdkconfig.h>
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 #define TAG "MCP"
+
+// ==================== 看板卡片：聊天中"问一句、屏幕出图" ====================
+// 服务器按内容渲染成 466×466 PNG（契约见 GET /render），设备下载后铺满屏显示，
+// 一直留到用户下次说话/触摸（由 display->SetPreviewImage(nullptr) 收起）。
+// 下载走独立任务 + MCP 异步回复，不阻塞协议任务和 Application 主任务。
+
+static constexpr size_t kMaxCardBytes = 512 * 1024;
+
+namespace {
+
+bool IsUrlSafe(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+           c == '-' || c == '_' || c == '.' || c == '~';
+}
+
+std::string UrlEncode(const std::string& s) {
+    static const char* kHex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char c : s) {
+        if (IsUrlSafe(c)) {
+            out += static_cast<char>(c);
+        } else {
+            out += '%';
+            out += kHex[c >> 4];
+            out += kHex[c & 0x0F];
+        }
+    }
+    return out;
+}
+
+// http://host:port/xiaozhi/ota/ → http://host:port
+std::string OtaUrlToBase(const char* ota_url) {
+    std::string u(ota_url ? ota_url : "");
+    const std::string suffix = "/xiaozhi/ota/";
+    size_t pos = u.find(suffix);
+    if (pos != std::string::npos && pos > 0) {
+        return u.substr(0, pos);
+    }
+    return "";
+}
+
+bool ProbeBase(const std::string& base) {
+    auto http = Board::GetInstance().GetNetwork()->CreateHttp(3);
+    if (http == nullptr) return false;
+    http->SetTimeout(1500);
+    if (!http->Open("GET", base + "/board/rev")) return false;
+    bool ok = (http->GetStatusCode() == 200);
+    http->Close();
+    return ok;
+}
+
+// 与 OTA 链同源：记住的节点 → 探 LAN → DDNS
+// ⚠️ NVS 的 key 硬上限 15 字符，且 Settings::SetString 内部是 ESP_ERROR_CHECK ——
+//    key 超长会直接 abort 重启设备。所以这里用自己 9 字符的 key，
+//    不去碰 ota.cc 那个 20 字符、本来就写不进去的 ota_url_last_success。
+std::string CardBaseUrl() {
+    Settings wifi("wifi", true);
+    std::string remembered = wifi.GetString("card_base");
+    if (!remembered.empty()) return remembered;
+
+    std::string lan = OtaUrlToBase(CONFIG_OTA_LAN_URL);
+    std::string ddns = OtaUrlToBase(CONFIG_OTA_URL);
+    std::string base = (!lan.empty() && ProbeBase(lan)) ? lan : ddns;
+    if (!base.empty()) {
+        wifi.SetString("card_base", base);  // 下次免探测
+    }
+    return base;
+}
+
+std::string BuildRenderUrl(const PropertyList& props) {
+    std::string title  = props["title"].value<std::string>();
+    std::string big    = props["big"].value<std::string>();
+    std::string lines  = props["lines"].value<std::string>();
+    std::string footer = props["footer"].value<std::string>();
+    std::string kind   = props["kind"].value<std::string>();
+
+    if (title.empty() && big.empty() && lines.empty() && footer.empty()) {
+        // 什么都没给：显示服务器上当前的看板图
+        std::string base = CardBaseUrl();
+        return base.empty() ? "" : base + "/board.png";
+    }
+
+    if (kind.empty()) kind = "info";
+    std::string base = CardBaseUrl();
+    if (base.empty()) return "";
+
+    // lines 用 | 分隔；分隔符本身不编码，各段分别编码（服务器按 | 切分后再逐段解码）
+    std::string enc_lines;
+    size_t start = 0;
+    while (true) {
+        size_t bar = lines.find('|', start);
+        std::string seg = lines.substr(start, (bar == std::string::npos)
+                                              ? std::string::npos : bar - start);
+        if (!seg.empty()) {
+            if (!enc_lines.empty()) enc_lines += '|';
+            enc_lines += UrlEncode(seg);
+        }
+        if (bar == std::string::npos) break;
+        start = bar + 1;
+    }
+    if (enc_lines.empty()) {
+        // 只给了 lines 之外的内容但 lines 为空，或给的行全是空串：当没有处理
+        enc_lines.clear();
+    }
+
+    std::string url = base + "/render?kind=" + UrlEncode(kind);
+    if (!title.empty())  url += "&title="  + UrlEncode(title);
+    if (!big.empty())    url += "&big="    + UrlEncode(big);
+    if (!enc_lines.empty()) url += "&lines=" + enc_lines;
+    if (!footer.empty()) url += "&footer=" + UrlEncode(footer);
+    return url;
+}
+
+// McpServer::ReplyResult 是「原样拼接」result，不加引号也不转义 —— 传裸文本会拼出
+// 非法 JSON（"result":图片已显示在屏幕上），服务器解析不了，整轮对话就断在这里
+// （症状：图出来了但助手不再出声）。
+// 形状必须与 McpTool::Call() 一致：{"content":[{"type":"text","text":"..."}],"isError":false}
+std::string McpTextResult(const std::string& text) {
+    cJSON* result = cJSON_CreateObject();
+    cJSON* content = cJSON_CreateArray();
+    cJSON* item = cJSON_CreateObject();
+    cJSON_AddStringToObject(item, "type", "text");
+    cJSON_AddStringToObject(item, "text", text.c_str());
+    cJSON_AddItemToArray(content, item);
+    cJSON_AddItemToObject(result, "content", content);
+    cJSON_AddBoolToObject(result, "isError", false);
+    char* s = cJSON_PrintUnformatted(result);
+    std::string out(s != nullptr ? s : "{}");
+    if (s != nullptr) cJSON_free(s);
+    cJSON_Delete(result);
+    return out;
+}
+
+struct CardFetchArgs {
+    LvglDisplay* display;
+    std::string url;
+};
+
+void CardFetchTask(void* arg) {
+    auto* a = static_cast<CardFetchArgs*>(arg);
+    bool ok = false;
+    std::string err;
+
+    do {
+        auto http = Board::GetInstance().GetNetwork()->CreateHttp(3);
+        if (http == nullptr) { err = "无法创建 HTTP"; break; }
+        http->SetTimeout(10000);
+        if (!http->Open("GET", a->url)) { err = "连不上服务器"; break; }
+        int code = http->GetStatusCode();
+        if (code != 200) { http->Close(); err = "HTTP " + std::to_string(code); break; }
+
+        size_t len = http->GetBodyLength();
+        if (len == 0 || len > kMaxCardBytes) {
+            http->Close();
+            err = "长度异常 " + std::to_string(len);
+            break;
+        }
+        auto* data = static_cast<char*>(heap_caps_malloc(len, MALLOC_CAP_SPIRAM));
+        if (data == nullptr) { http->Close(); err = "内存不足"; break; }
+
+        size_t got = 0;
+        while (got < len) {
+            int n = http->Read(data + got, len - got);
+            if (n <= 0) break;
+            got += n;
+        }
+        http->Close();
+        if (got != len) { heap_caps_free(data); err = "下载中断"; break; }
+
+        try {
+            auto image = std::make_unique<LvglAllocatedImage>(data, len);
+            a->display->SetCardMode(true);
+            a->display->SetPreviewImage(std::move(image));
+            ok = true;
+        } catch (const std::exception& e) {
+            heap_caps_free(data);  // 构造抛异常时析构不会跑
+            err = std::string("解码失败：") + e.what();
+        }
+    } while (false);
+
+    auto& mcp = McpServer::GetInstance();
+    if (ok) {
+        ESP_LOGI(TAG, "show_card: %s", a->url.c_str());
+        // 回给服务器的一律 ASCII：中文只在串口日志里，避免再踩编码的坑
+        mcp.ReplyAsyncResult(McpTextResult("ok"));
+    } else {
+        ESP_LOGE(TAG, "show_card failed: %s (%s)", err.c_str(), a->url.c_str());
+        mcp.ReplyAsyncResult(McpTextResult("failed"));
+    }
+    delete a;
+    vTaskDelete(nullptr);
+}
+
+}  // namespace
 
 McpServer::McpServer() {
 }
@@ -228,6 +428,52 @@ void McpServer::AddUserOnlyTools() {
                 return true;
             });
 #endif // CONFIG_LV_USE_SNAPSHOT
+
+        // 看板卡片：聊天中"问一句、屏幕出图"。与上面 preview_image 的区别：
+        // ①对 LLM 可见（AddTool 而非 AddUserOnlyTool）②铺满屏 ③不自动消失
+        // ④回调里不下载（下载走 CardFetchTask + 异步回复，否则会卡住 Application 主任务）
+        auto* card_tool = AddTool("self.screen.show_card",
+            "在手表屏幕上显示一张图片卡片，并一直留到用户下次说话或触摸屏幕。\n"
+            "当用户想「看」某样东西时使用：天气、题目、单词、日程、图表、清单等。\n"
+            "给 title/big/lines/footer 由服务器渲染成卡片；只给 url 则直接显示该地址的图片；\n"
+            "什么都不给则显示服务器上当前的看板图。\n"
+            "Args:\n"
+            "  `title`: 标题（顶部小字）\n"
+            "  `big`: 主文案（居中大号字，如 `13°`）\n"
+            "  `lines`: 若干行小字，用 | 分隔\n"
+            "  `footer`: 底部一行小字\n"
+            "  `kind`: 版式，info / math / hanzi，默认 info\n"
+            "  `url`: 直接指定的图片地址（给了就忽略上面的内容参数）\n"
+            "Return:\n"
+            "  显示结果。",
+            PropertyList({
+                Property("title",  kPropertyTypeString, std::string("")),
+                Property("big",    kPropertyTypeString, std::string("")),
+                Property("lines",  kPropertyTypeString, std::string("")),
+                Property("footer", kPropertyTypeString, std::string("")),
+                Property("kind",   kPropertyTypeString, std::string("")),
+                Property("url",    kPropertyTypeString, std::string(""))
+            }),
+            [display](const PropertyList& properties) -> ReturnValue {
+                std::string url = properties["url"].value<std::string>();
+                if (url.empty()) {
+                    url = BuildRenderUrl(properties);
+                }
+                if (url.empty()) {
+                    // 异常消息也会原样拼进 JSON（ReplyError），保持 ASCII
+                    throw std::runtime_error("show_card: cannot resolve image url");
+                }
+                auto* args = new CardFetchArgs{display, url};
+                if (xTaskCreateWithCaps(CardFetchTask, "card_fetch", 8192, args, 3, nullptr,
+                                        MALLOC_CAP_SPIRAM) != pdPASS) {
+                    delete args;
+                    throw std::runtime_error("show_card: task create failed");
+                }
+                return std::string(kAsyncMarker);  // 已异步启动，等下由 ReplyAsyncResult 回复
+            });
+        if (card_tool != nullptr) {
+            card_tool->set_async(true);
+        }
     }
 #endif // HAVE_LVGL
 
