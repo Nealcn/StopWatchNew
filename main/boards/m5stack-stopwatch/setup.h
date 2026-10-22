@@ -67,13 +67,13 @@ private:
         sections_.clear();
         sections_ = {
             {
-                "设备",
+                "Device",
                 {
-                    {"亮度",
+                    {"Brightness",
                      [this]() { OpenWorker(std::make_unique<setup_workers::BrightnessWorker>()); }},
-                    {"音量",
+                    {"Volume",
                      [this]() { OpenWorker(std::make_unique<setup_workers::VolumeWorker>()); }},
-                    {"WiFi 配网",
+                    {"WiFi Setup",
                      [this]() {
                          // 先退出设置界面（配网 Alert 显示在可见层），再进入配网 AP
                          Exit();
@@ -85,18 +85,27 @@ private:
                 },
             },
             {
-                "时间与日期",
+                "Date & Time",
                 {
-                    {"设置时间",
+                    {"Set Time",
                      [this]() { OpenWorker(std::make_unique<setup_workers::SetTimeWorker>()); }},
-                    {"设置日期",
+                    {"Set Date",
                      [this]() { OpenWorker(std::make_unique<setup_workers::SetDateWorker>()); }},
                 },
             },
             {
-                "系统",
+                "System",
                 {
-                    {"清除 AI 配置",
+                    // 挂绳模式：整屏 180° 反转。标签显示当前状态，重新进设置时刷新。
+                    {std::string("Screen: ") +
+                         (Board::GetInstance().IsScreenRotated180() ? "Rotated 180" : "Normal"),
+                     []() {
+                         bool target = !Board::GetInstance().IsScreenRotated180();
+                         Board::GetInstance().SetScreenRotated180(target);
+                         Board::GetInstance().GetDisplay()->ShowNotification(
+                             target ? "Screen rotated 180" : "Screen normal");
+                     }},
+                    {"Clear AI Config",
                      [this]() {
                          Settings ws_settings("websocket", true);
                          ws_settings.EraseKey("url");

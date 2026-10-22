@@ -53,6 +53,10 @@ bool Assets::Apply(bool refresh_display_theme) {
     return strategy_ ? strategy_->Apply(this, refresh_display_theme) : false;
 }
 
+bool Assets::ApplyTextFont() {
+    return strategy_ ? strategy_->ApplyTextFont(this) : false;
+}
+
 bool Assets::InitializePartition() {
     return strategy_ ? strategy_->InitializePartition(this) : false;
 }
@@ -242,7 +246,8 @@ bool Assets::LvglStrategy::Apply(Assets* assets, bool refresh_display_theme) {
     if (cJSON_IsString(font)) {
         std::string fonts_text_file = font->valuestring;
         if (assets->GetAssetData(fonts_text_file, ptr, size)) {
-            auto text_font = std::make_shared<LvglCBinFont>(ptr);
+            // 资产是 binfont 格式，必须用 LvglBinFont（cbin 加载器读不了）
+            auto text_font = std::make_shared<LvglBinFont>(ptr, size);
             if (text_font->font() == nullptr) {
                 ESP_LOGE(TAG, "Failed to load fonts.bin");
                 return false;
@@ -354,6 +359,66 @@ bool Assets::LvglStrategy::Apply(Assets* assets, bool refresh_display_theme) {
     
     cJSON_Delete(root);
     return true;
+}
+
+// 只加载字体：读 index.json 的 text_font → assets 里的 binfont → 替换 light/dark 主题字体。
+// 不碰 emoji 集合与 srmodels，避免 Apply() 的副作用，可安全在启动早期调用。
+bool Assets::LvglStrategy::ApplyTextFont(Assets* assets) {
+    void* ptr = nullptr;
+    size_t size = 0;
+    if (!assets->GetAssetData("index.json", ptr, size)) {
+        ESP_LOGE(TAG, "ApplyTextFont: index.json not found in assets");
+        return false;
+    }
+
+    cJSON* root = cJSON_ParseWithLength(static_cast<char*>(ptr), size);
+    if (root == nullptr) {
+        ESP_LOGE(TAG, "ApplyTextFont: index.json is not valid");
+        return false;
+    }
+
+    bool ok = false;
+    cJSON* font = cJSON_GetObjectItem(root, "text_font");
+    if (cJSON_IsString(font)) {
+        std::string font_name = font->valuestring;
+        if (assets->GetAssetData(font_name, ptr, size)) {
+            auto& theme_manager = LvglThemeManager::GetInstance();
+            auto light_theme = theme_manager.GetTheme("light");
+            auto dark_theme = theme_manager.GetTheme("dark");
+
+            // 兜底字体：assets 的 common 字体不是内置 basic 字体的超集
+            //（缺「聆」「浏」等），用当前内置字体做 fallback，避免弄丢原本能显示的字。
+            const lv_font_t* fallback = nullptr;
+            if (light_theme != nullptr) {
+                auto current = light_theme->text_font();
+                auto builtin = dynamic_cast<LvglBuiltInFont*>(current.get());
+                if (builtin != nullptr) {
+                    fallback = builtin->font();
+                }
+            }
+
+            auto text_font = std::make_shared<LvglBinFont>(ptr, size, fallback);
+            if (text_font->font() != nullptr) {
+                if (light_theme != nullptr) {
+                    light_theme->set_text_font(text_font);
+                }
+                if (dark_theme != nullptr) {
+                    dark_theme->set_text_font(text_font);
+                }
+                ESP_LOGI(TAG, "Text font applied: %s (%u bytes)", font_name.c_str(), (unsigned)size);
+                ok = true;
+            } else {
+                ESP_LOGE(TAG, "ApplyTextFont: failed to load %s", font_name.c_str());
+            }
+        } else {
+            ESP_LOGE(TAG, "ApplyTextFont: %s not found in assets", font_name.c_str());
+        }
+    } else {
+        ESP_LOGE(TAG, "ApplyTextFont: no text_font in index.json");
+    }
+
+    cJSON_Delete(root);
+    return ok;
 }
 #endif // HAVE_LVGL
 

@@ -37,6 +37,12 @@
 #define DISPLAY_OFFSET_X            0
 #define DISPLAY_OFFSET_Y            0
 
+// 180° 反转时的 gap 补偿（面板 GRAM 480、可视 466、正向 x_gap=6 → 左 6 / 右 8，不对称）
+// 上下：实测 14 会在顶部留一条白边 → 0 正确
+// 左右：镜像后窗口要落到物理 6..471 → x_gap 用 8；否则右边露 1 列（RGB565 错位显示为绿线）
+#define DISPLAY_ROT180_Y_GAP        0
+#define DISPLAY_ROT180_X_GAP        8
+
 // Round screen UI layout (466x466)
 #define DISPLAY_ROUND_EDGE_INSET        56 // top/bottom arc safe zone
 #define DISPLAY_STATUS_BAR_TOP_OFF      56 // status text: upper half, below WiFi/battery icons

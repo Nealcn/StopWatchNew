@@ -14,6 +14,7 @@
 #include "M5IOE1.h"
 #include "M5PM1.h"
 #include "config.h"
+#include "settings.h"
 #include "assets/lang_config.h"
 #include "protocols/protocol.h"
 #include <esp_log.h>
@@ -82,6 +83,9 @@ private:
     Button button2_;
     PotatoFaceDisplay* display_;
     StopwatchBacklight* backlight_;
+    esp_lcd_panel_io_handle_t panel_io_ = nullptr;
+    esp_lcd_panel_handle_t    panel_     = nullptr;
+    bool rotation_180_ = false;   // 挂绳模式：整屏 180° 反转（NVS "display"/"rot180"）
     LauncherScreen launcher_;
     VoiceInputApp voice_input_;
     WatchFaceApp watch_face_;
@@ -103,8 +107,15 @@ private:
         auto* self = static_cast<M5StackStopwatchBoard*>(lv_indev_get_driver_data(indev));
         if (self->touch_.read() && self->touch_.getFingerNum() > 0) {
             data->state = LV_INDEV_STATE_PR;
-            data->point.x = self->touch_.getX();
-            data->point.y = self->touch_.getY();
+            int x = self->touch_.getX();
+            int y = self->touch_.getY();
+            if (self->rotation_180_) {
+                // 面板 180° 镜像后，触摸原始坐标仍是"未镜像"的，这里手动翻回来
+                x = DISPLAY_WIDTH  - 1 - x;
+                y = DISPLAY_HEIGHT - 1 - y;
+            }
+            data->point.x = x < 0 ? 0 : (x > DISPLAY_WIDTH  - 1 ? DISPLAY_WIDTH  - 1 : x);
+            data->point.y = y < 0 ? 0 : (y > DISPLAY_HEIGHT - 1 ? DISPLAY_HEIGHT - 1 : y);
             // 触摸活动 → 重置空闲计时
             Application::GetInstance().ResetIdleTimer();
             // 触摸 = 下一次交互：收起看板卡片。
@@ -218,9 +229,6 @@ private:
         ioe_.digitalWrite(IOE_PIN_LCD_RST, HIGH);
         vTaskDelay(pdMS_TO_TICKS(120));
 
-        esp_lcd_panel_io_handle_t panel_io = nullptr;
-        esp_lcd_panel_handle_t panel = nullptr;
-
         esp_lcd_panel_io_spi_config_t io_config = {};
         io_config.cs_gpio_num = DISPLAY_QSPI_CS;
         io_config.dc_gpio_num = GPIO_NUM_NC;
@@ -230,7 +238,7 @@ private:
         io_config.lcd_cmd_bits = 32;
         io_config.lcd_param_bits = 8;
         io_config.flags.quad_mode = true;
-        ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(DISPLAY_QSPI_HOST, &io_config, &panel_io));
+        ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(DISPLAY_QSPI_HOST, &io_config, &panel_io_));
 
         co5300_vendor_config_t vendor_config = {
             .init_cmds = &vendor_specific_init[0],
@@ -243,20 +251,51 @@ private:
         panel_config.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB;
         panel_config.bits_per_pixel = 16;
         panel_config.vendor_config = &vendor_config;
-        ESP_ERROR_CHECK(esp_lcd_new_panel_co5300(panel_io, &panel_config, &panel));
+        ESP_ERROR_CHECK(esp_lcd_new_panel_co5300(panel_io_, &panel_config, &panel_));
 
-        esp_lcd_panel_set_gap(panel, 0x06, 0);
-        esp_lcd_panel_reset(panel);
-        esp_lcd_panel_init(panel);
-        esp_lcd_panel_invert_color(panel, false);
-        esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
-        esp_lcd_panel_disp_on_off(panel, true);
+        esp_lcd_panel_set_gap(panel_, 0x06, 0);
+        esp_lcd_panel_reset(panel_);
+        esp_lcd_panel_init(panel_);
+        esp_lcd_panel_invert_color(panel_, false);
+        esp_lcd_panel_mirror(panel_, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
+        esp_lcd_panel_disp_on_off(panel_, true);
 
-        display_ = new PotatoFaceDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+        display_ = new PotatoFaceDisplay(panel_io_, panel_, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                        DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
                                        DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
-        backlight_ = new StopwatchBacklight(panel_io, display_);
+        backlight_ = new StopwatchBacklight(panel_io_, display_);
         backlight_->RestoreBrightness();
+
+        // 读取上次的屏幕方向并应用。必须放在 display_ 创建之后：
+        // esp_lvgl_port 在 lvgl_port_add_disp()（rotation=0）里会再调一次
+        // esp_lcd_panel_mirror(false,false)，放前面会被刷回正向。
+        {
+            Settings display_settings("display", false);
+            rotation_180_ = display_settings.GetBool("rot180", false);
+            if (rotation_180_) {
+                ApplyRotationHardware(true, false);   // 只改硬件，界面由随后的 SetupUI 正常绘制
+            }
+        }
+    }
+
+    // 只动硬件层：MADCTL 的 MX|MY（180°）+ 上下 gap 补偿。
+    // 依赖 esp_lcd_co5300 >= 2.1.0 才支持 mirror_y（本机已装 2.1.0）。
+    void ApplyRotationHardware(bool on, bool refresh_lvgl) {
+        esp_lcd_panel_mirror(panel_, on, on);
+        // 镜像后水平边距的不对称会翻边，x_gap 要跟着改（正向 6 → 反转 8）
+        esp_lcd_panel_set_gap(panel_, on ? DISPLAY_ROT180_X_GAP : 0x06,
+                              on ? DISPLAY_ROT180_Y_GAP : 0);
+
+        if (!refresh_lvgl) {
+            return;   // 开机路径：界面还没建（SetupUI 尚未执行），不需要也不能碰 LVGL
+        }
+
+        // 硬件镜像不会自动触发重绘：整屏作废，让 LVGL 全量重画一遍。
+        // 调用方必须已持有 DisplayLockGuard（与 LVGL 任务并发会卡死在 lv_inv_area）。
+        lv_obj_invalidate(lv_screen_active());
+        lv_obj_invalidate(lv_layer_top());
+        lv_obj_invalidate(lv_layer_sys());
+        lv_refr_now(nullptr);
     }
 
     // A+B 同时按住 → 返回主页面
@@ -532,6 +571,24 @@ public:
 
     void ShowLauncher(bool show) override {
         launcher_.SetVisible(show);
+    }
+
+    // 屏幕方向（挂绳模式）：180° 反转
+    bool IsScreenRotated180() override { return rotation_180_; }
+
+    void SetScreenRotated180(bool on) override {
+        if (rotation_180_ == on) {
+            return;
+        }
+        rotation_180_ = on;
+
+        Settings display_settings("display", true);
+        display_settings.SetBool("rot180", on);
+
+        DisplayLockGuard lock(display_);   // LVGL port 是递归锁，安全
+        ApplyRotationHardware(on, true);
+
+        ESP_LOGI(TAG, "screen rotation 180 = %d", on);
     }
 
     bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {

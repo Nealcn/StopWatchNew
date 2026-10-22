@@ -234,7 +234,7 @@ private:
             static_cast<VoiceInputApp*>(lv_event_get_user_data(e))->OnConfirmClicked();
         }, LV_EVENT_CLICKED, this);
         lv_obj_t* confirm_label = lv_label_create(confirm_btn_);
-        lv_label_set_text(confirm_label, "确认");
+        lv_label_set_text(confirm_label, "Confirm");
         lv_obj_set_style_text_font(confirm_label, GetTextFont(), 0);
         lv_obj_center(confirm_label);
 
@@ -247,7 +247,7 @@ private:
             static_cast<VoiceInputApp*>(lv_event_get_user_data(e))->OnCancelClicked();
         }, LV_EVENT_CLICKED, this);
         lv_obj_t* cancel_label = lv_label_create(cancel_btn_);
-        lv_label_set_text(cancel_label, "取消");
+        lv_label_set_text(cancel_label, "Cancel");
         lv_obj_set_style_text_font(cancel_label, GetTextFont(), 0);
         lv_obj_center(cancel_label);
 
@@ -285,29 +285,29 @@ private:
         bool show_preview = false;
         switch (state_) {
             case State::Idle:
-                status = framework::BleVoice::get().isConnected() ? "已连接桌面端" : "等待连接电脑…";
-                hint = "按住按键 1 说话";
+                status = framework::BleVoice::get().isConnected() ? "Desktop connected" : "Waiting for PC...";
+                hint = "Hold Button 1 to talk";
                 // 已连接 = 绿色，未连接 = 灰色
                 color = framework::BleVoice::get().isConnected() ? 0x4AD78C : 0x6B7686;
                 break;
             case State::Rec:
-                status = "录音中…";
-                hint = "松开按键 1 结束";
+                status = "Recording...";
+                hint = "Release to finish";
                 color = 0xFF7A8A;
                 break;
             case State::Asr:
-                status = "识别中…";
+                status = "Recognizing...";
                 hint = "";
                 color = 0xFFC46A;
                 break;
             case State::Preview:
-                status = "识别结果（未粘贴）";
-                hint = "点确认粘贴，或取消";
+                status = "Result (not pasted)";
+                hint = "Confirm to paste, or Cancel";
                 color = 0x7AC4FF;
                 show_preview = true;
                 break;
             case State::Pasting:
-                status = "已粘贴";
+                status = "Pasted";
                 hint = "";
                 color = 0x7AC4FF;
                 break;

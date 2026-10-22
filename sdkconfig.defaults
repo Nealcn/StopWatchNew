@@ -76,6 +76,8 @@ CONFIG_LV_USE_ASSERT_STYLE=y
 # Use compressed font
 CONFIG_LV_FONT_FMT_TXT_LARGE=y
 CONFIG_LV_USE_FONT_COMPRESSED=n
+# 缺字形时画方框还是零宽消失：选 n —— AI 字幕是动态中文，内置字体覆盖不全，
+# 方框比"少一个字"更碍眼；设置/语音页已英文化，不依赖兜底
 CONFIG_LV_USE_FONT_PLACEHOLDER=n
 CONFIG_LV_USE_LODEPNG=y
 

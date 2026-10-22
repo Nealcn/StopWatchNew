@@ -92,6 +92,10 @@ public:
     // Launcher（主页面）接口：默认无 launcher，其他板不受影响
     virtual bool IsLauncherVisible() const { return false; }
     virtual void ShowLauncher(bool show) { (void)show; }
+
+    // 屏幕方向（挂绳模式）：180° 反转整屏
+    virtual bool IsScreenRotated180() { return false; }
+    virtual void SetScreenRotated180(bool on) { (void)on; }
 };
 
 #define DECLARE_BOARD(BOARD_CLASS_NAME) \

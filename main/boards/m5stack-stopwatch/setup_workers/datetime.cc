@@ -71,7 +71,7 @@ public:
 
         _title_label = std::make_unique<Label>(_panel->get());
         _title_label->align(LV_ALIGN_TOP_MID, 0, 60);
-        _title_label->setText("设置时间");
+        _title_label->setText("Set Time");
         _title_label->setTextFont(GetTextFont());
         _title_label->setTextColor(lv_color_hex(0xFFFFFF));
 
@@ -126,7 +126,7 @@ public:
         _ok_button->setBorderWidth(0);
         _ok_button->setShadowWidth(0);
         _ok_button->setBgColor(lv_color_hex(0x4AD78C));
-        _ok_button->label().setText("确定");
+        _ok_button->label().setText("OK");
         _ok_button->label().setTextFont(GetTextFont());
         _ok_button->label().setTextColor(lv_color_hex(0x0F5831));
         _ok_button->label().align(LV_ALIGN_CENTER, 0, 0);
@@ -185,7 +185,7 @@ public:
 
         _title_label = std::make_unique<Label>(_panel->get());
         _title_label->align(LV_ALIGN_TOP_MID, 0, 60);
-        _title_label->setText("设置日期");
+        _title_label->setText("Set Date");
         _title_label->setTextFont(GetTextFont());
         _title_label->setTextColor(lv_color_hex(0xFFFFFF));
 
@@ -315,12 +315,12 @@ private:
         _day_selector->setHidden(show_year_month);
 
         if (show_year_month) {
-            _ok_button->label().setText("下一步");
+            _ok_button->label().setText("Next");
             return;
         }
 
         updateSummaryLabel();
-        _ok_button->label().setText("确定");
+        _ok_button->label().setText("OK");
     }
 
     std::unique_ptr<Container> _panel;

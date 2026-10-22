@@ -86,7 +86,7 @@ public:
         _ok_button->setBorderWidth(0);
         _ok_button->setShadowWidth(0);
         _ok_button->setBgColor(lv_color_hex(0x4AD78C));
-        _ok_button->label().setText("确定");
+        _ok_button->label().setText("OK");
         _ok_button->label().setTextFont(GetTextFont());
         _ok_button->label().setTextColor(lv_color_hex(0x0F5831));
         _ok_button->label().align(LV_ALIGN_CENTER, 0, 0);
@@ -152,7 +152,7 @@ public:
 
         createSwitchRow(88, "Button SFX", _current_config.sfxEnabled,
                         [this](bool enabled) { _current_config.sfxEnabled = enabled; });
-        createSwitchRow(195, "按键震动", _current_config.vibrateEnabled,
+        createSwitchRow(195, "Button Haptic", _current_config.vibrateEnabled,
                         [this](bool enabled) { _current_config.vibrateEnabled = enabled; });
 
         _ok_button = std::make_unique<Button>(_panel->get());
@@ -162,7 +162,7 @@ public:
         _ok_button->setBorderWidth(0);
         _ok_button->setShadowWidth(0);
         _ok_button->setBgColor(lv_color_hex(0x4AD78C));
-        _ok_button->label().setText("确定");
+        _ok_button->label().setText("OK");
         _ok_button->label().setTextFont(GetTextFont());
         _ok_button->label().setTextColor(lv_color_hex(0x0F5831));
         _ok_button->label().align(LV_ALIGN_CENTER, 0, 0);
