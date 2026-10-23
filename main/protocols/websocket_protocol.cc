@@ -95,7 +95,7 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
 
 bool WebsocketProtocol::OpenAudioChannel() {
     deliberate_close_ = false;
-    reconnect_delay_sec_ = 30;
+    reconnect_delay_sec_ = 5;   // 常在线场景：首档退避 5s，盲区不要太长
     if (reconnect_task_ != nullptr) {
         vTaskDelete(reconnect_task_);
         reconnect_task_ = nullptr;
@@ -252,8 +252,8 @@ void WebsocketProtocol::ScheduleReconnect() {
     if (deliberate_close_) {
         return;
     }
-    if (reconnect_delay_sec_ < 30) {
-        reconnect_delay_sec_ = 30;
+    if (reconnect_delay_sec_ < 5) {
+        reconnect_delay_sec_ = 5;
     }
     ESP_LOGI(TAG, "Scheduling reconnect in %d s", reconnect_delay_sec_);
     xTaskCreate(ReconnectTask, "ws_reconnect", 4096, this, 1, &reconnect_task_);
@@ -288,7 +288,7 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
     bool ok = self->ConnectInternal();
     if (ok) {
         ESP_LOGI(TAG, "Reconnected successfully");
-        self->reconnect_delay_sec_ = 30;
+        self->reconnect_delay_sec_ = 5;
     } else {
         ESP_LOGW(TAG, "Reconnect failed, backoff %d -> %d s", self->reconnect_delay_sec_,
                  std::min(self->reconnect_delay_sec_ * 2, 300));

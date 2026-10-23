@@ -127,6 +127,12 @@ public:
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
 
+    // 常在线 / 充电不降亮 开关（写 NVS "watch_net"，键名 ≤15 字符）
+    bool IsAlwaysOnline() const { return net_always_online_; }
+    void SetAlwaysOnline(bool on);
+    bool IsAwakeOnCharge() const { return net_awake_on_chg_; }
+    void SetAwakeOnCharge(bool on);
+
     /**
      * Reset idle timer (called on touch/button/voice activity)
      */
@@ -170,6 +176,14 @@ private:
     std::atomic<int> idle_ticks_{0};
     std::atomic<bool> dimmed_{false};
 
+    // 常在线 / 充电不降亮（NVS 命名空间 "watch_net"）
+    // 注意：NVS 键名硬上限 15 字符，别用长名字（超长写入会 ESP_ERROR_CHECK abort）
+    bool net_always_online_ = true;   // always_online : 开机自动建链 + 30s 看门狗
+    bool net_awake_on_chg_  = true;   // awake_on_chg  : 充电时不降亮度
+    bool net_low_pwr_batt_  = true;   // low_pwr_batt  : 电池时允许 WiFi 无省电
+    int  net_dim_after_s_   = 30;     // dim_after_s   : 电池下多少秒无操作降亮度
+    bool last_charging_     = false;
+
 
     // Event handlers
     void HandleStateChangedEvent();
@@ -181,6 +195,8 @@ private:
     void HandleActivationDoneEvent();
     void HandleWakeWordDetectedEvent();
     void ContinueOpenAudioChannel(ListeningMode mode);
+    // 常在线：只把音频通道建立起来并回到 Idle（不进入聆听），失败下次看门狗再试
+    void EnsureAlwaysOnline();
     void ContinueWakeWordInvoke(const std::string& wake_word);
 
     // Activation task (runs in background)

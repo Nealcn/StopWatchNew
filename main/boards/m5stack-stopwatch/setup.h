@@ -15,6 +15,7 @@
 #include <lvgl.h>
 
 #include "board.h"
+#include "application.h"
 #include "display/display.h"
 #include "wifi_board.h"
 #include "setup_view/view.h"
@@ -104,6 +105,24 @@ private:
                          Board::GetInstance().SetScreenRotated180(target);
                          Board::GetInstance().GetDisplay()->ShowNotification(
                              target ? "Screen rotated 180" : "Screen normal");
+                     }},
+                    // 常在线：开机自动建链 + 30s 看门狗（随时能被服务端推送触达）
+                    {std::string("Always online: ") +
+                         (Application::GetInstance().IsAlwaysOnline() ? "ON" : "OFF"),
+                     []() {
+                         bool target = !Application::GetInstance().IsAlwaysOnline();
+                         Application::GetInstance().SetAlwaysOnline(target);
+                         Board::GetInstance().GetDisplay()->ShowNotification(
+                             target ? "Always online ON" : "Always online OFF");
+                     }},
+                    // 充电时不降亮度（挂绳/桌面摆放）
+                    {std::string("Awake on charge: ") +
+                         (Application::GetInstance().IsAwakeOnCharge() ? "ON" : "OFF"),
+                     []() {
+                         bool target = !Application::GetInstance().IsAwakeOnCharge();
+                         Application::GetInstance().SetAwakeOnCharge(target);
+                         Board::GetInstance().GetDisplay()->ShowNotification(
+                             target ? "Awake on charge ON" : "Awake on charge OFF");
                      }},
                     {"Clear AI Config",
                      [this]() {

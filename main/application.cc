@@ -63,6 +63,19 @@ void Application::Initialize() {
     auto& board = Board::GetInstance();
     SetDeviceState(kDeviceStateStarting);
 
+    // 读取 watch_net 配置（NVS 键名必须 ≤15 字符）
+    {
+        Settings net_settings("watch_net", false);
+        net_always_online_ = net_settings.GetBool("always_online", true);
+        net_awake_on_chg_  = net_settings.GetBool("awake_on_chg", true);
+        net_low_pwr_batt_  = net_settings.GetBool("low_pwr_batt", true);
+        net_dim_after_s_   = net_settings.GetInt("dim_after_s", 30);
+        if (net_dim_after_s_ <= 0) net_dim_after_s_ = 30;
+        ESP_LOGI(TAG, "watch_net: always_online=%d awake_on_chg=%d low_pwr_batt=%d dim_after_s=%d",
+                 (int)net_always_online_, (int)net_awake_on_chg_, (int)net_low_pwr_batt_,
+                 net_dim_after_s_);
+    }
+
     // Setup the display
     auto display = board.GetDisplay();
     display->SetupUI();
@@ -280,22 +293,54 @@ void Application::Run() {
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
-            // 空闲降亮度：30 秒无操作 → 亮度 10
-            idle_ticks_++;
-            if (idle_ticks_ >= 30 && !dimmed_) {
-                dimmed_ = true;
-                auto backlight = Board::GetInstance().GetBacklight();
-                if (backlight) {
-                    backlight->SetBrightness(10, false);
-                    ESP_LOGI(TAG, "Idle 30s, dimmed brightness to 10");
+            // ---- 充电状态（1Hz 读 PMIC，和状态栏同源）----
+            int battery_level = 0;
+            bool charging = false, discharging = false;
+            bool batt_ok = Board::GetInstance().GetBatteryLevel(battery_level, charging, discharging);
+            bool is_charging = batt_ok && charging;
+
+            // 空闲降亮度：充电时可配置为不降（挂绳/桌面摆放场景）
+            if (is_charging && net_awake_on_chg_) {
+                idle_ticks_ = 0;
+                if (dimmed_) {
+                    dimmed_ = false;
+                    auto backlight = Board::GetInstance().GetBacklight();
+                    if (backlight) {
+                        backlight->RestoreBrightness();
+                        ESP_LOGI(TAG, "Charging, keep awake");
+                    }
                 }
-            } else if (idle_ticks_ < 30 && dimmed_) {
-                dimmed_ = false;
-                auto backlight = Board::GetInstance().GetBacklight();
-                if (backlight) {
-                    backlight->RestoreBrightness();
-                    ESP_LOGI(TAG, "Activity resumed, restored brightness");
+            } else {
+                idle_ticks_++;
+                if (idle_ticks_ >= net_dim_after_s_ && !dimmed_) {
+                    dimmed_ = true;
+                    auto backlight = Board::GetInstance().GetBacklight();
+                    if (backlight) {
+                        backlight->SetBrightness(10, false);
+                        ESP_LOGI(TAG, "Idle %ds, dimmed brightness to 10", net_dim_after_s_);
+                    }
+                } else if (idle_ticks_ < net_dim_after_s_ && dimmed_) {
+                    dimmed_ = false;
+                    auto backlight = Board::GetInstance().GetBacklight();
+                    if (backlight) {
+                        backlight->RestoreBrightness();
+                        ESP_LOGI(TAG, "Activity resumed, restored brightness");
+                    }
                 }
+            }
+
+            // 充电/拔电切省电档（电池时允许 WiFi 省电换续航）
+            if (batt_ok && net_low_pwr_batt_ && is_charging != last_charging_) {
+                last_charging_ = is_charging;
+                Board::GetInstance().SetPowerSaveLevel(
+                    is_charging ? PowerSaveLevel::PERFORMANCE : PowerSaveLevel::LOW_POWER);
+                ESP_LOGI(TAG, "Power save -> %s",
+                         is_charging ? "PERFORMANCE (charging)" : "LOW_POWER (battery)");
+            }
+
+            // 常在线看门狗：每 30 秒补一次链（开机/掉线/服务端踢连接都能自愈）
+            if (net_always_online_ && clock_ticks_ % 30 == 0) {
+                EnsureAlwaysOnline();
             }
 
             // Print debug info every 10 seconds
@@ -384,6 +429,9 @@ void Application::HandleActivationDoneEvent() {
         // Play the success sound to indicate the device is ready
         audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
     });
+
+    // 开机常连：主动建立音频通道（等效 StackChan 常在线），失败由 30s 看门狗重试
+    EnsureAlwaysOnline();
 }
 
 void Application::ActivationTask() {
@@ -828,6 +876,56 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
     }
 
     SetListeningMode(mode);
+}
+
+// 常在线：只建立音频通道并回到 Idle，不进入聆听（不 SendStartListening）。
+// 用于开机自动建链 / 掉线自愈。OpenAudioChannel 阻塞 ≤10s，必须在 Schedule 里跑。
+void Application::EnsureAlwaysOnline() {
+    if (!net_always_online_) {
+        return;
+    }
+    if (protocol_ == nullptr || protocol_->IsAudioChannelOpened()) {
+        return;
+    }
+    if (GetDeviceState() != kDeviceStateIdle) {
+        return;   // 正在听/说/连接中，别插队
+    }
+
+    SetDeviceState(kDeviceStateConnecting);
+    Schedule([this]() {
+        if (GetDeviceState() != kDeviceStateConnecting) {
+            return;
+        }
+        auto& board = Board::GetInstance();
+        board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+        if (protocol_ && !protocol_->IsAudioChannelOpened()) {
+            if (!protocol_->OpenAudioChannel()) {
+                ESP_LOGW(TAG, "always-online: open audio channel failed");
+                SetDeviceState(kDeviceStateIdle);
+                return;
+            }
+        }
+        SetDeviceState(kDeviceStateIdle);   // 只保持链路，不进 Listening
+        ESP_LOGI(TAG, "always-online: connected");
+    });
+}
+
+void Application::SetAlwaysOnline(bool on) {
+    net_always_online_ = on;
+    Settings s("watch_net", true);
+    s.SetBool("always_online", on);
+    ESP_LOGI(TAG, "always_online -> %d", (int)on);
+    if (on) {
+        // 从 LVGL/设置菜单上下文回来，转主任务再建链
+        Schedule([this]() { EnsureAlwaysOnline(); });
+    }
+}
+
+void Application::SetAwakeOnCharge(bool on) {
+    net_awake_on_chg_ = on;
+    Settings s("watch_net", true);
+    s.SetBool("awake_on_chg", on);
+    ESP_LOGI(TAG, "awake_on_chg -> %d", (int)on);
 }
 
 void Application::HandleStartListeningEvent() {
