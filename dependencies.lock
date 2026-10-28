@@ -858,7 +858,7 @@ dependencies:
   smooth_ui_toolkit:
     dependencies: []
     source:
-      path: D:\StopWatchNew\Stackchan-Newstep\components\smooth_ui_toolkit
+      path: D:\StopWatchNew\StopWatch\components\smooth_ui_toolkit
       type: local
     version: '*'
   tny-robotics/sh1106-esp-idf:
