@@ -348,15 +348,19 @@ void McpServer::AddUserOnlyTools() {
             return true;
         });
 
-    // 震动探针：模型不可见，只能经 /mcp/device/call 驱动 —— 用来验证马达 PWM 通道
-    AddUserOnlyTool("self.motor.vibrate", "Vibrate the motor briefly",
+    // 远程震动：服务端 /mcp/device/call 只认 LLM 可见的工具（AddTool），
+    // 所以这里不能用 AddUserOnlyTool —— 旧探针 self.motor.vibrate 就是这么调不到的。
+    // 回调只写状态 + 通知震动任务，不阻塞协议/主任务（见 Board::Vibrate）。
+    AddTool("self.vibrate",
+        "Vibrate the watch motor briefly (silent haptic notification). "
+        "Args: duration_ms (10-2000), strength (0-100).",
         PropertyList({
-            Property("duration", kPropertyTypeInteger, 10, 3000),   // ms
+            Property("duration_ms", kPropertyTypeInteger, 10, 2000),
             Property("strength", kPropertyTypeInteger, 0, 100)
         }),
         [](const PropertyList& properties) -> ReturnValue {
             Board::GetInstance().Vibrate(
-                (uint16_t)properties["duration"].value<int>(),
+                (uint16_t)properties["duration_ms"].value<int>(),
                 (uint8_t)properties["strength"].value<int>());
             return true;
         });
