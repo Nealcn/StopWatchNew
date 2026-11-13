@@ -76,17 +76,20 @@ bool ProbeBase(const std::string& base) {
     return ok;
 }
 
-// 与 OTA 链同源：记住的节点 → 探 LAN → DDNS
+// 与 OTA 链同源：记住的节点 → 探第一跳(域名) → 第二跳(IP)
 // ⚠️ NVS 的 key 硬上限 15 字符，且 Settings::SetString 内部是 ESP_ERROR_CHECK ——
-//    key 超长会直接 abort 重启设备。所以这里用自己 9 字符的 key，
-//    不去碰 ota.cc 那个 20 字符、本来就写不进去的 ota_url_last_success。
+//    key 超长会直接 abort 重启设备。
 std::string CardBaseUrl() {
     Settings wifi("wifi", true);
-    std::string remembered = wifi.GetString("card_base");
-    if (!remembered.empty()) return remembered;
-
     std::string lan = OtaUrlToBase(CONFIG_OTA_LAN_URL);
     std::string ddns = OtaUrlToBase(CONFIG_OTA_URL);
+
+    std::string remembered = wifi.GetString("card_base");
+    // 只认当前两个槽位：换服务器后旧的 base（如已下线的 NAS）不再使用
+    if (!remembered.empty() && (remembered == lan || remembered == ddns)) {
+        return remembered;
+    }
+
     std::string base = (!lan.empty() && ProbeBase(lan)) ? lan : ddns;
     if (!base.empty()) {
         wifi.SetString("card_base", base);  // 下次免探测

@@ -1,9 +1,9 @@
 CONFIG_BOARD_TYPE_M5STACK_STOPWATCH=y
 CONFIG_SPIRAM_MODE_OCT=y
-# 多服务器 OTA 按序切换：LAN → DDNS(OTA_URL) → 官方云(OTA_FALLBACK_URL,默认)
+# 多服务器 OTA 按序切换：域名(xz.nealtea.cn) → IP 兜底(OTA_URL) → 官方云(OTA_FALLBACK_URL,默认)
 # 设备端可在 NVS ota_url 配置自定义地址（优先级最高）
-CONFIG_OTA_LAN_URL="http://192.168.0.9:8003/xiaozhi/ota/"
-CONFIG_OTA_URL="http://www.nealtea.cn:8003/xiaozhi/ota/"
+CONFIG_OTA_LAN_URL="http://xz.nealtea.cn:8003/xiaozhi/ota/"
+CONFIG_OTA_URL="http://124.221.139.85:8003/xiaozhi/ota/"
 CONFIG_OTA_SKIP_UPDATE_ON_FALLBACK=y
 CONFIG_OTA_LAN_TIMEOUT_MS=3000
 

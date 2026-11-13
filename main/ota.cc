@@ -29,11 +29,14 @@ namespace {
 // 是否自建服务器（LAN 私网段 / 自有域名）。自建节点允许固件升级，
 // 官方云等外部节点受 OTA_SKIP_UPDATE_ON_FALLBACK 保护，仅做服务器发现。
 bool IsSelfHostedServer(const std::string& url) {
+    // 候选链里的两个自建槽位（域名 + IP 兜底）一律视为自建，允许固件升级
+    if (url == CONFIG_OTA_LAN_URL || url == CONFIG_OTA_URL) return true;
     if (url.find("192.168.") != std::string::npos) return true;
     if (url.find("://10.") != std::string::npos) return true;  // 10.x.x.x 私网段
     if (url.find("127.0.0.1") != std::string::npos) return true;
     if (url.find("localhost") != std::string::npos) return true;
     if (url.find("nealtea.cn") != std::string::npos) return true;
+    if (url.find("124.221.139.85") != std::string::npos) return true;  // 云 VM 裸 IP 兜底
     return false;
 }
 
@@ -90,7 +93,7 @@ std::unique_ptr<Http> Ota::SetupHttp() {
  * Specification: https://ccnphfhqs21z.feishu.cn/wiki/FjW6wZmisimNBBkov6OcmfvknVd
  *
  * 多服务器按序切换（LAN → DDNS → 官方云）：
- * 候选顺序 = NVS ota_url(手动) → NVS ota_url_last_success(上次成功) →
+ * 候选顺序 = NVS ota_url(手动) → NVS ota_last_ok(上次成功，仅限当前槽位) →
  *             OTA_LAN_URL → OTA_URL → OTA_FALLBACK_URL（去重，空/过短跳过）
  * 任一成功即停止；LAN 用短超时（OTA_LAN_TIMEOUT_MS），其余用公网超时。
  */
@@ -110,12 +113,17 @@ esp_err_t Ota::CheckVersion() {
     ESP_LOGI(TAG, "Current version: %s", current_version_.c_str());
 
     // 构造候选列表（含去重）
+    // 注意：NVS key 硬上限 15 字符，且写需要读写句柄；旧 key "ota_url_last_success"
+    // 20 字符 + 只读句柄，从未写入成功过。
     std::vector<std::string> candidates;
-    Settings nvs("wifi", false);
-    std::string manual_url = nvs.GetString("ota_url");          // 用户手动设置（最高优先）
-    std::string last_ok = nvs.GetString("ota_url_last_success");  // 上次成功节点（可选增强）
+    Settings nvs("wifi", true);
+    std::string manual_url = nvs.GetString("ota_url");      // 用户手动设置（最高优先）
+    std::string last_ok = nvs.GetString("ota_last_ok");     // 上次成功节点（可选增强）
     if (!manual_url.empty()) candidates.push_back(manual_url);
-    if (!last_ok.empty() && last_ok != manual_url) candidates.push_back(last_ok);
+    // 只认当前两个自建槽位：换服务器后旧地址（如已下线的 NAS）不再被优先尝试
+    bool last_ok_is_current_slot =
+        (last_ok == CONFIG_OTA_LAN_URL || last_ok == CONFIG_OTA_URL);
+    if (last_ok_is_current_slot && last_ok != manual_url) candidates.push_back(last_ok);
     candidates.push_back(CONFIG_OTA_LAN_URL);
     candidates.push_back(CONFIG_OTA_URL);
     candidates.push_back(CONFIG_OTA_FALLBACK_URL);
@@ -142,9 +150,11 @@ esp_err_t Ota::CheckVersion() {
         last_error = TryCheckVersion(u, timeout_ms);
         if (last_error == ESP_OK) {
             active_ota_url_ = u;
-            // 记住本次成功节点：下次启动优先尝试，失败再回退全链
-            if (nvs.GetString("ota_url_last_success") != u) {
-                nvs.SetString("ota_url_last_success", u);
+            // 记住本次成功节点：下次启动优先尝试，失败再回退全链。
+            // 只记当前两个自建槽位；官方云兜底不写入，避免开机先跳过自建节点。
+            if ((u == CONFIG_OTA_LAN_URL || u == CONFIG_OTA_URL) &&
+                nvs.GetString("ota_last_ok") != u) {
+                nvs.SetString("ota_last_ok", u);
             }
             ESP_LOGI(TAG, "OTA server OK: %s", u.c_str());
             return ESP_OK;
